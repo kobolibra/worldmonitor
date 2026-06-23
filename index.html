@@ -144,8 +144,9 @@
   function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; }
 
   // ---- Captions: pure native bottom rendering (identical to the original project) ----
-  // The original touches captions 0%. We only reset each cue ONCE to auto in case hls.js
-  // assigns an odd line position; the browser then stacks them natively at the bottom — smooth.
+  // CEA-608 captions are muxed into the stream, so they advance with the video; reducing live
+  // latency makes BOTH catch up. We only reset each cue ONCE to auto so the browser stacks them
+  // natively at the bottom — smooth, no per-frame reflow.
   function normalizeCaptions(track){
     var cues = track.cues;
     if(!cues) return;
@@ -220,8 +221,9 @@
     var fellBack=false;
     function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
-      // 与原项目完全一致的播放配置：低延迟 + Worker，其余全用 hls.js 默认（不追帧、不重缓冲）
-      hls=new window.Hls({ enableWorker:true, lowLatencyMode:true });
+      // 比原项目更贴近直播边缘：低延迟 + Worker，更小的同步距离；落后太多时一次性跳回边缘（不追帧/不加速，保持顺滑）
+      hls=new window.Hls({ enableWorker:true, lowLatencyMode:true,
+        liveSyncDurationCount:2, liveMaxLatencyDurationCount:6 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
         setStatus(""); buildQualityMenu();
