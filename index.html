@@ -6,20 +6,21 @@
 <title>Bloomberg Live</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#060709; --panel:#0e1318; --panel-2:#141b22; --line:#1c242d;
     --text:#f2f4f7; --muted:#98a2ad; --muted-2:#616a74;
     --accent:#ff6a00; --accent-2:#ff9a4d; --live:#27d17c;
     --radius:16px;
+    --hel:'Helvetica Neue',Helvetica,Arial,sans-serif;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body{height:100%;}
   body{
     background:
-      radial-gradient(1100px 560px at 88% -12%, rgba(255,106,0,.13), transparent 58%),
-      radial-gradient(900px 520px at -8% 112%, rgba(38,92,170,.12), transparent 55%),
+      radial-gradient(1100px 560px at 88% -12%, rgba(255,106,0,.12), transparent 58%),
+      radial-gradient(900px 520px at -8% 112%, rgba(38,92,170,.11), transparent 55%),
       var(--bg);
     color:var(--text);
     font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
@@ -33,25 +34,24 @@
     position:relative; z-index:10;
     display:flex; align-items:center; gap:20px; flex-wrap:wrap;
     padding:16px 30px;
-    background:linear-gradient(180deg,rgba(14,19,24,.86),rgba(14,19,24,.55));
+    background:linear-gradient(180deg,rgba(14,19,24,.88),rgba(14,19,24,.55));
     backdrop-filter:blur(20px) saturate(150%); -webkit-backdrop-filter:blur(20px) saturate(150%);
     border-bottom:1px solid var(--line);
   }
   header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
-    background:linear-gradient(90deg,transparent,rgba(255,106,0,.55),transparent);}
+    background:linear-gradient(90deg,transparent,rgba(255,106,0,.5),transparent);}
   .brand{display:flex; align-items:center; gap:13px;}
+  /* 官方 Bloomberg 图标：黑底白「B」 */
   .brand .mark{
-    width:34px; height:34px; border-radius:9px; position:relative; flex:none; overflow:hidden;
-    background:linear-gradient(150deg,var(--accent-2),var(--accent));
-    box-shadow:0 8px 22px rgba(255,106,0,.5), inset 0 1px 0 rgba(255,255,255,.4);
+    width:36px; height:36px; border-radius:7px; flex:none;
+    background:#000; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.16); box-shadow:0 6px 18px rgba(0,0,0,.55);
   }
-  .brand .mark::before{content:""; position:absolute; top:0; left:-120%; width:60%; height:100%;
-    background:linear-gradient(115deg,transparent,rgba(255,255,255,.65),transparent); transform:skewX(-18deg);
-    animation:shine 4.5s ease-in-out infinite;}
-  @keyframes shine{0%,100%{left:-120%;}55%,70%{left:130%;}}
-  .brand h1{font-size:18px; font-weight:800; letter-spacing:-.01em; line-height:1.1;}
-  .brand h1 b{color:var(--accent); font-weight:800;}
-  .brand .sub{font-size:10.5px; color:var(--muted-2); letter-spacing:.18em; text-transform:uppercase; margin-top:3px;}
+  .brand .mark b{font-family:var(--hel); font-weight:700; font-size:23px; line-height:1; color:#fff; transform:translateY(-.5px);}
+  /* 官方 Bloomberg 字标：Helvetica 粗体单色白 */
+  .brand h1{font-family:var(--hel); font-size:21px; font-weight:700; letter-spacing:-.022em; line-height:1.05; color:#fff;}
+  .brand h1 .live{font-weight:400; color:var(--muted); margin-left:7px; letter-spacing:0;}
+  .brand .sub{font-family:var(--hel); font-size:10px; color:var(--muted-2); letter-spacing:.2em; text-transform:uppercase; margin-top:4px;}
   .live-pill{display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border-radius:999px;
     background:rgba(39,209,124,.10); border:1px solid rgba(39,209,124,.34); color:#73e6a9;
     font-size:11px; font-weight:700; letter-spacing:.14em;}
@@ -82,12 +82,6 @@
   .status:not(:empty)::before{content:""; width:28px; height:28px; border-radius:50%;
     border:2.5px solid rgba(255,255,255,.14); border-top-color:var(--accent); animation:spin 1s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
-  .badge{position:absolute; top:16px; left:16px; z-index:5; display:flex; align-items:center; gap:8px; padding:7px 13px;
-    border-radius:999px; background:rgba(6,8,10,.6); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-    border:1px solid rgba(255,255,255,.11); color:var(--text); font-size:12px; font-weight:600; letter-spacing:.02em;
-    box-shadow:0 8px 24px rgba(0,0,0,.4);}
-  .badge .dot{width:8px; height:8px; border-radius:50%; background:var(--accent); flex:none;}
-  .badge.live .dot{background:var(--live); animation:pulse 1.8s infinite;}
   .hint{position:absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:5; display:none; align-items:center; gap:8px;
     padding:9px 16px; border-radius:999px; background:rgba(6,8,10,.62); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
     border:1px solid rgba(255,255,255,.11); color:var(--text); font-size:12.5px; font-weight:500; box-shadow:0 8px 24px rgba(0,0,0,.4);}
@@ -103,9 +97,9 @@
 <body>
   <header>
     <div class="brand">
-      <div class="mark"></div>
+      <div class="mark"><b>B</b></div>
       <div>
-        <h1><b>Bloomberg</b> Live</h1>
+        <h1>Bloomberg<span class="live">Live</span></h1>
         <div class="sub">Global Markets &middot; Real-time</div>
       </div>
     </div>
@@ -117,7 +111,6 @@
   </header>
   <div class="stage">
     <div class="screen" id="screen">
-      <div class="badge" id="badge" style="display:none"><span class="dot"></span><span id="badgeText"></span></div>
       <div class="status" id="status"></div>
       <div class="hint" id="hint"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
       <video id="video" playsinline controls style="display:none"></video>
@@ -126,7 +119,7 @@
   </div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
-  // 复刻原项目（worldmonitor）逻辑：Bloomberg 优先走官方按地区路由的 HLS 流，失败才回退 YouTube。
+  // Bloomberg 优先走官方按地区路由的 HLS 流，失败才回退 YouTube。
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
   var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg"; // @markets = Bloomberg Television（1080p60）
 
@@ -135,17 +128,11 @@
   var statusEl = document.getElementById("status");
   var channelsEl = document.getElementById("channels");
   var qualitySel = document.getElementById("quality");
-  var badge = document.getElementById("badge");
-  var badgeText = document.getElementById("badgeText");
   var hintEl = document.getElementById("hint");
   var screenEl = document.getElementById("screen");
   var hls = null;
 
   function setStatus(t){ statusEl.textContent = t || ""; }
-  function setBadge(text, live){
-    if(!text){ badge.style.display="none"; return; }
-    badge.style.display="flex"; badge.className="badge"+(live?" live":""); badgeText.textContent=text;
-  }
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
   function setActive(btn){
     var btns=channelsEl.querySelectorAll("button");
@@ -162,9 +149,8 @@
     return "自动";
   }
 
-  function playYouTube(reason){
+  function playYouTube(){
     showFrame(); setStatus("");
-    setBadge("YouTube · 1080p"+(reason?"（"+reason+"）":""), true);
     frame.src="https://www.youtube.com/embed/live_stream?channel="+YT_CHANNEL+"&autoplay=1&mute=1";
   }
 
@@ -178,27 +164,24 @@
   }
 
   function playHls(){
-    showVideo(); setStatus("正在连接 Bloomberg 官方直播…"); setBadge("连接中…", false);
+    showVideo(); setStatus("正在连接 Bloomberg 官方直播…");
     destroyHls(); video.muted=true;
     var fellBack=false;
-    function fallback(reason){ if(fellBack) return; fellBack=true; playYouTube(reason); }
+    function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
       hls=new window.Hls({ enableWorker:true, lowLatencyMode:false, startLevel:-1, maxBufferLength:30, backBufferLength:30,
         maxMaxBufferLength:60, liveSyncDurationCount:4, abrBandWidthFactor:0.95, abrBandWidthUpFactor:0.75,
         fragLoadingMaxRetry:6, manifestLoadingMaxRetry:4 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
-        setStatus(""); buildQualityMenu();
-        setBadge("Bloomberg 原生流 · "+levelLabel(hls.levels[hls.currentLevel]), true);
-        video.play().catch(function(){}); showHint();
+        setStatus(""); buildQualityMenu(); video.play().catch(function(){}); showHint();
       });
-      hls.on(window.Hls.Events.LEVEL_SWITCHED, function(_e,data){ setBadge("Bloomberg 原生流 · "+levelLabel(hls.levels[data.level]), true); });
-      hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); fallback("原生流不可用"); } });
+      hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); fallback(); } });
     } else if(video.canPlayType("application/vnd.apple.mpegurl")){
-      video.src=HLS_URL; setBadge("Bloomberg 原生流 · 自适应（Safari）", true);
+      video.src=HLS_URL;
       video.addEventListener("loadedmetadata", function(){ setStatus(""); video.play().catch(function(){}); showHint(); }, {once:true});
-      video.addEventListener("error", function(){ fallback("原生流不可用"); }, {once:true});
-    } else { fallback("浏览器不支持 HLS"); }
+      video.addEventListener("error", function(){ fallback(); }, {once:true});
+    } else { fallback(); }
   }
 
   qualitySel.onchange=function(){ if(hls) hls.currentLevel=parseInt(qualitySel.value,10); };
@@ -210,7 +193,7 @@
 
   var CHANNELS=[
     { name:"Bloomberg TV（按地区）", fn:playHls },
-    { name:"YouTube · 1080p", fn:function(){ playYouTube(); } }
+    { name:"YouTube · 1080p", fn:playYouTube }
   ];
   CHANNELS.forEach(function(ch,i){
     var btn=document.createElement("button"); btn.textContent=ch.name;
