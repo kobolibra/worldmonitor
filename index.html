@@ -11,7 +11,7 @@
   :root{
     --bg:#060709; --line:#1c242d;
     --text:#f2f4f7; --muted:#98a2ad; --muted-2:#616a74;
-    --accent:#ff6a00; --accent-2:#ff9a4d; --live:#27d17c;
+    --accent:#ff6a00; --live:#27d17c;
     --radius:16px;
     --hel:'Helvetica Neue',Helvetica,Arial,sans-serif;
   }
@@ -19,8 +19,8 @@
   html,body{height:100%;}
   body{
     background:
-      radial-gradient(1100px 560px at 88% -12%, rgba(255,106,0,.12), transparent 58%),
-      radial-gradient(900px 520px at -8% 112%, rgba(38,92,170,.11), transparent 55%),
+      radial-gradient(1100px 560px at 88% -12%, rgba(255,106,0,.10), transparent 58%),
+      radial-gradient(900px 520px at -8% 112%, rgba(38,92,170,.10), transparent 55%),
       var(--bg);
     color:var(--text);
     font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
@@ -33,23 +33,16 @@
   header{
     position:relative; z-index:10; flex:none;
     display:flex; align-items:center; gap:20px; flex-wrap:wrap;
-    padding:16px 30px;
+    padding:18px 30px;
     background:linear-gradient(180deg,rgba(14,19,24,.88),rgba(14,19,24,.55));
     backdrop-filter:blur(20px) saturate(150%); -webkit-backdrop-filter:blur(20px) saturate(150%);
     border-bottom:1px solid var(--line);
   }
   header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
-    background:linear-gradient(90deg,transparent,rgba(255,106,0,.5),transparent);}
-  .brand{display:flex; align-items:center; gap:13px;}
-  .brand .mark{
-    width:36px; height:36px; border-radius:7px; flex:none;
-    background:#000; display:flex; align-items:center; justify-content:center;
-    border:1px solid rgba(255,255,255,.16); box-shadow:0 6px 18px rgba(0,0,0,.55);
-  }
-  .brand .mark b{font-family:var(--hel); font-weight:700; font-size:23px; line-height:1; color:#fff; transform:translateY(-.5px);}
-  .brand h1{font-family:var(--hel); font-size:21px; font-weight:700; letter-spacing:-.022em; line-height:1.05; color:#fff;}
-  .brand h1 .live{font-weight:400; color:var(--muted); margin-left:7px; letter-spacing:0;}
-  .brand .sub{font-family:var(--hel); font-size:10px; color:var(--muted-2); letter-spacing:.2em; text-transform:uppercase; margin-top:4px;}
+    background:linear-gradient(90deg,transparent,rgba(255,106,0,.45),transparent);}
+  /* 官方 Bloomberg 字标：Helvetica 粗体、纯白、紧字距、单色 */
+  .brand{display:flex; align-items:center;}
+  .brand h1{font-family:var(--hel); font-size:25px; font-weight:700; letter-spacing:-.025em; line-height:1; color:#fff;}
   .live-pill{margin-left:auto; display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:999px;
     background:rgba(39,209,124,.10); border:1px solid rgba(39,209,124,.34); color:#73e6a9;
     font-size:11px; font-weight:700; letter-spacing:.14em;}
@@ -64,7 +57,6 @@
   .screen video{position:relative; z-index:1; width:auto; height:auto; max-width:100%; max-height:100%;
     aspect-ratio:16/9; object-fit:contain; background:#000;}
   .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000;}
-  /* 字幕外观：较小字号 + 半透明衡底 */
   .screen video::cue{ background:rgba(0,0,0,.7); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:0.72em; line-height:1.35; text-shadow:0 1px 2px rgba(0,0,0,.6); }
   .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
     font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
@@ -79,20 +71,14 @@
   .hint svg{width:15px; height:15px; fill:var(--accent);}
   @keyframes hintFade{0%{opacity:0; transform:translateX(-50%) translateY(8px);}12%,72%{opacity:1; transform:translateX(-50%) translateY(0);}100%{opacity:0; transform:translateX(-50%) translateY(8px); visibility:hidden;}}
   @media(max-width:680px){
-    header{padding:13px 16px; gap:12px;} .stage{padding:14px 16px 18px;}
-    .brand .sub{display:none;}
+    header{padding:14px 16px; gap:12px;} .stage{padding:14px 16px 18px;}
+    .brand h1{font-size:22px;}
   }
 </style>
 </head>
 <body>
   <header>
-    <div class="brand">
-      <div class="mark"><b>B</b></div>
-      <div>
-        <h1>Bloomberg<span class="live">Live</span></h1>
-        <div class="sub">Global Markets &middot; Real-time</div>
-      </div>
-    </div>
+    <div class="brand"><h1>Bloomberg</h1></div>
     <span class="live-pill"><span class="pulse"></span>LIVE</span>
   </header>
   <div class="stage">
@@ -121,7 +107,6 @@
   function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
   function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); }
 
-  // 将当前同时显示的字幕行移到底部居中，按行向下堆叠（最新的在最下），避免重叠
   function reflowCaptions(track){
     var cues = track.activeCues;
     if(!cues || !cues.length) return;
@@ -131,7 +116,7 @@
       try{
         c.snapToLines=false;
         c.lineAlign="start";
-        c.line = 86 - (n-1-i)*7;   // 靠底，逐行上移，保留行序
+        c.line = 86 - (n-1-i)*7;
         c.position=50; c.align="center"; c.size=84;
       }catch(e){}
     }
