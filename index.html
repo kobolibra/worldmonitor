@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#060709; --panel:#0e1318; --panel-2:#141b22; --line:#1c242d;
+    --bg:#060709; --line:#1c242d;
     --text:#f2f4f7; --muted:#98a2ad; --muted-2:#616a74;
     --accent:#ff6a00; --accent-2:#ff9a4d; --live:#27d17c;
     --radius:16px;
@@ -52,23 +52,11 @@
   .brand h1{font-family:var(--hel); font-size:21px; font-weight:700; letter-spacing:-.022em; line-height:1.05; color:#fff;}
   .brand h1 .live{font-weight:400; color:var(--muted); margin-left:7px; letter-spacing:0;}
   .brand .sub{font-family:var(--hel); font-size:10px; color:var(--muted-2); letter-spacing:.2em; text-transform:uppercase; margin-top:4px;}
-  .live-pill{display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border-radius:999px;
+  .live-pill{margin-left:auto; display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:999px;
     background:rgba(39,209,124,.10); border:1px solid rgba(39,209,124,.34); color:#73e6a9;
     font-size:11px; font-weight:700; letter-spacing:.14em;}
   .live-pill .pulse{width:7px; height:7px; border-radius:50%; background:var(--live); animation:pulse 1.8s infinite;}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(39,209,124,.55);}70%{box-shadow:0 0 0 8px rgba(39,209,124,0);}100%{box-shadow:0 0 0 0 rgba(39,209,124,0);}}
-  .controls{display:flex; gap:11px; flex-wrap:wrap; align-items:center; margin-left:auto;}
-  .seg{display:flex; gap:4px; padding:4px; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:12px;}
-  .seg button{background:transparent; color:var(--muted); border:0; padding:8px 16px; border-radius:9px; cursor:pointer;
-    font-family:inherit; font-size:13px; font-weight:500; letter-spacing:.01em; transition:all .2s ease; white-space:nowrap;}
-  .seg button:hover{color:var(--text); background:rgba(255,255,255,.05);}
-  .seg button.active{background:linear-gradient(180deg,var(--accent-2),var(--accent)); color:#160a02; font-weight:700;
-    box-shadow:0 5px 16px rgba(255,106,0,.42);}
-  #quality{background:rgba(255,255,255,.03); color:var(--text); border:1px solid var(--line); padding:10px 32px 10px 13px;
-    border-radius:12px; font-family:inherit; font-size:13px; font-weight:500; cursor:pointer; appearance:none; -webkit-appearance:none;
-    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%2398a2ad' d='M3 4.5L6 7.5L9 4.5'/></svg>");
-    background-repeat:no-repeat; background-position:right 12px center; transition:border-color .2s;}
-  #quality:hover{border-color:#2e3842;}
   /* Stage */
   .stage{flex:1; display:flex; padding:24px 30px 30px;}
   .screen{position:relative; flex:1; border-radius:var(--radius); overflow:hidden; background:#000; cursor:pointer;
@@ -90,7 +78,7 @@
   @keyframes hintFade{0%{opacity:0; transform:translateX(-50%) translateY(8px);}12%,72%{opacity:1; transform:translateX(-50%) translateY(0);}100%{opacity:0; transform:translateX(-50%) translateY(8px); visibility:hidden;}}
   @media(max-width:680px){
     header{padding:13px 16px; gap:12px;} .stage{padding:14px 16px 18px;}
-    .brand .sub{display:none;} .controls{width:100%;} .seg button{padding:7px 12px;}
+    .brand .sub{display:none;}
   }
 </style>
 </head>
@@ -104,10 +92,6 @@
       </div>
     </div>
     <span class="live-pill"><span class="pulse"></span>LIVE</span>
-    <div class="controls">
-      <div class="seg" id="channels"></div>
-      <select id="quality" style="display:none"></select>
-    </div>
   </header>
   <div class="stage">
     <div class="screen" id="screen">
@@ -119,48 +103,26 @@
   </div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
-  // Bloomberg 优先走官方按地区路由的 HLS 流，失败才回退 YouTube。
+  // Bloomberg 全球 follow-the-sun 直播流；失败自动回退 YouTube。
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
-  var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg"; // @markets = Bloomberg Television（1080p60）
+  var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg"; // @markets = Bloomberg Television
 
   var video = document.getElementById("video");
   var frame = document.getElementById("frame");
   var statusEl = document.getElementById("status");
-  var channelsEl = document.getElementById("channels");
-  var qualitySel = document.getElementById("quality");
   var hintEl = document.getElementById("hint");
   var screenEl = document.getElementById("screen");
   var hls = null;
 
   function setStatus(t){ statusEl.textContent = t || ""; }
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
-  function setActive(btn){
-    var btns=channelsEl.querySelectorAll("button");
-    for(var i=0;i<btns.length;i++) btns[i].classList.remove("active");
-    if(btn) btn.classList.add("active");
-  }
   function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
   function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
-  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); qualitySel.style.display="none"; hintEl.classList.remove("show"); }
-
-  function levelLabel(l){
-    if(l && l.height) return l.height+"p";
-    if(l && l.bitrate) return Math.round(l.bitrate/1000)+"k";
-    return "自动";
-  }
+  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); }
 
   function playYouTube(){
     showFrame(); setStatus("");
     frame.src="https://www.youtube.com/embed/live_stream?channel="+YT_CHANNEL+"&autoplay=1&mute=1";
-  }
-
-  function buildQualityMenu(){
-    qualitySel.innerHTML="";
-    var auto=document.createElement("option"); auto.value="-1"; auto.textContent="画质：自动"; qualitySel.appendChild(auto);
-    for(var i=hls.levels.length-1;i>=0;i--){
-      var o=document.createElement("option"); o.value=String(i); o.textContent="画质："+levelLabel(hls.levels[i]); qualitySel.appendChild(o);
-    }
-    var top=hls.levels.length-1; qualitySel.value=String(top); hls.currentLevel=top; qualitySel.style.display="inline-block";
   }
 
   function playHls(){
@@ -174,7 +136,8 @@
         fragLoadingMaxRetry:6, manifestLoadingMaxRetry:4 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
-        setStatus(""); buildQualityMenu(); video.play().catch(function(){}); showHint();
+        setStatus(""); hls.currentLevel = hls.levels.length - 1; // 锁定最高画质
+        video.play().catch(function(){}); showHint();
       });
       hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); fallback(); } });
     } else if(video.canPlayType("application/vnd.apple.mpegurl")){
@@ -184,23 +147,12 @@
     } else { fallback(); }
   }
 
-  qualitySel.onchange=function(){ if(hls) hls.currentLevel=parseInt(qualitySel.value,10); };
-
   // 点击画面取消静音（仅原生流）
   screenEl.addEventListener("click", function(){
     if(video.style.display!=="none" && video.muted){ video.muted=false; video.play().catch(function(){}); hintEl.classList.remove("show"); }
   });
 
-  var CHANNELS=[
-    { name:"Bloomberg TV（按地区）", fn:playHls },
-    { name:"YouTube · 1080p", fn:playYouTube }
-  ];
-  CHANNELS.forEach(function(ch,i){
-    var btn=document.createElement("button"); btn.textContent=ch.name;
-    btn.onclick=function(){ setActive(btn); ch.fn(); };
-    channelsEl.appendChild(btn);
-    if(i===0){ setActive(btn); ch.fn(); }
-  });
+  playHls();
 </script>
 </body>
 </html>
