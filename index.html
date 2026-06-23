@@ -6,116 +6,97 @@
 <title>Bloomberg Live</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#07090c; --panel:#0f1318; --panel-2:#141a21; --line:#1f2730;
-    --text:#eef1f4; --muted:#8b939d; --muted-2:#5f6770;
-    --accent:#ff6a00; --accent-soft:rgba(255,106,0,.14); --live:#22c55e;
-    --radius:14px; --shadow:0 18px 50px rgba(0,0,0,.55);
+    --bg:#060709; --panel:#0e1318; --panel-2:#141b22; --line:#1c242d;
+    --text:#f2f4f7; --muted:#98a2ad; --muted-2:#616a74;
+    --accent:#ff6a00; --accent-2:#ff9a4d; --live:#27d17c;
+    --radius:16px;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body{height:100%;}
   body{
     background:
-      radial-gradient(1200px 600px at 85% -10%, rgba(255,106,0,.10), transparent 60%),
-      radial-gradient(900px 500px at 0% 110%, rgba(40,80,140,.10), transparent 55%),
+      radial-gradient(1100px 560px at 88% -12%, rgba(255,106,0,.13), transparent 58%),
+      radial-gradient(900px 520px at -8% 112%, rgba(38,92,170,.12), transparent 55%),
       var(--bg);
     color:var(--text);
     font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
     -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-    display:flex; flex-direction:column; min-height:100vh;
+    display:flex; flex-direction:column; min-height:100vh; overflow:hidden;
+    animation:appIn .6s ease both;
   }
+  @keyframes appIn{from{opacity:0; transform:translateY(6px);}to{opacity:1; transform:none;}}
   /* Header */
   header{
-    position:sticky; top:0; z-index:10;
-    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
-    padding:14px 26px;
-    background:rgba(12,16,20,.72);
-    backdrop-filter:blur(18px) saturate(140%);
-    -webkit-backdrop-filter:blur(18px) saturate(140%);
+    position:relative; z-index:10;
+    display:flex; align-items:center; gap:20px; flex-wrap:wrap;
+    padding:16px 30px;
+    background:linear-gradient(180deg,rgba(14,19,24,.86),rgba(14,19,24,.55));
+    backdrop-filter:blur(20px) saturate(150%); -webkit-backdrop-filter:blur(20px) saturate(150%);
     border-bottom:1px solid var(--line);
   }
-  .brand{display:flex; align-items:center; gap:12px;}
+  header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,106,0,.55),transparent);}
+  .brand{display:flex; align-items:center; gap:13px;}
   .brand .mark{
-    width:30px; height:30px; border-radius:8px;
-    background:linear-gradient(150deg,#ff8a33,var(--accent));
-    box-shadow:0 6px 18px rgba(255,106,0,.45);
-    position:relative; flex:none;
+    width:34px; height:34px; border-radius:9px; position:relative; flex:none; overflow:hidden;
+    background:linear-gradient(150deg,var(--accent-2),var(--accent));
+    box-shadow:0 8px 22px rgba(255,106,0,.5), inset 0 1px 0 rgba(255,255,255,.4);
   }
-  .brand .mark::after{
-    content:""; position:absolute; inset:0; border-radius:8px;
-    background:linear-gradient(180deg,rgba(255,255,255,.35),transparent 45%);
-  }
-  .brand h1{font-size:17px; font-weight:700; letter-spacing:.2px;}
-  .brand h1 b{color:var(--accent); font-weight:700;}
-  .brand .sub{font-size:11px; color:var(--muted-2); letter-spacing:.14em; text-transform:uppercase; margin-top:1px;}
-  .live-pill{
-    display:inline-flex; align-items:center; gap:7px;
-    padding:5px 11px; border-radius:999px;
-    background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.35);
-    color:#7ee2a4; font-size:11px; font-weight:600; letter-spacing:.12em;
-  }
-  .live-pill .pulse{width:7px; height:7px; border-radius:50%; background:var(--live); box-shadow:0 0 0 0 rgba(34,197,94,.6); animation:pulse 1.8s infinite;}
-  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55);}70%{box-shadow:0 0 0 7px rgba(34,197,94,0);}100%{box-shadow:0 0 0 0 rgba(34,197,94,0);}}
-  .controls{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-left:auto;}
-  .seg{display:flex; gap:4px; padding:4px; background:var(--panel); border:1px solid var(--line); border-radius:11px;}
-  .seg button{
-    background:transparent; color:var(--muted); border:0;
-    padding:7px 15px; border-radius:8px; cursor:pointer;
-    font-family:inherit; font-size:13px; font-weight:500; letter-spacing:.01em;
-    transition:all .18s ease;
-  }
-  .seg button:hover{color:var(--text); background:rgba(255,255,255,.04);}
-  .seg button.active{background:var(--accent); color:#0b0e11; font-weight:600; box-shadow:0 4px 14px rgba(255,106,0,.4);}
-  #quality{
-    background:var(--panel); color:var(--text); border:1px solid var(--line);
-    padding:9px 12px; border-radius:11px; font-family:inherit; font-size:13px; cursor:pointer;
-    appearance:none; -webkit-appearance:none;
-    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%238b939d' d='M3 4.5L6 7.5L9 4.5'/></svg>");
-    background-repeat:no-repeat; background-position:right 11px center; padding-right:30px;
-  }
-  #quality:hover{border-color:#2c3641;}
+  .brand .mark::before{content:""; position:absolute; top:0; left:-120%; width:60%; height:100%;
+    background:linear-gradient(115deg,transparent,rgba(255,255,255,.65),transparent); transform:skewX(-18deg);
+    animation:shine 4.5s ease-in-out infinite;}
+  @keyframes shine{0%,100%{left:-120%;}55%,70%{left:130%;}}
+  .brand h1{font-size:18px; font-weight:800; letter-spacing:-.01em; line-height:1.1;}
+  .brand h1 b{color:var(--accent); font-weight:800;}
+  .brand .sub{font-size:10.5px; color:var(--muted-2); letter-spacing:.18em; text-transform:uppercase; margin-top:3px;}
+  .live-pill{display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border-radius:999px;
+    background:rgba(39,209,124,.10); border:1px solid rgba(39,209,124,.34); color:#73e6a9;
+    font-size:11px; font-weight:700; letter-spacing:.14em;}
+  .live-pill .pulse{width:7px; height:7px; border-radius:50%; background:var(--live); animation:pulse 1.8s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(39,209,124,.55);}70%{box-shadow:0 0 0 8px rgba(39,209,124,0);}100%{box-shadow:0 0 0 0 rgba(39,209,124,0);}}
+  .controls{display:flex; gap:11px; flex-wrap:wrap; align-items:center; margin-left:auto;}
+  .seg{display:flex; gap:4px; padding:4px; background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:12px;}
+  .seg button{background:transparent; color:var(--muted); border:0; padding:8px 16px; border-radius:9px; cursor:pointer;
+    font-family:inherit; font-size:13px; font-weight:500; letter-spacing:.01em; transition:all .2s ease; white-space:nowrap;}
+  .seg button:hover{color:var(--text); background:rgba(255,255,255,.05);}
+  .seg button.active{background:linear-gradient(180deg,var(--accent-2),var(--accent)); color:#160a02; font-weight:700;
+    box-shadow:0 5px 16px rgba(255,106,0,.42);}
+  #quality{background:rgba(255,255,255,.03); color:var(--text); border:1px solid var(--line); padding:10px 32px 10px 13px;
+    border-radius:12px; font-family:inherit; font-size:13px; font-weight:500; cursor:pointer; appearance:none; -webkit-appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%2398a2ad' d='M3 4.5L6 7.5L9 4.5'/></svg>");
+    background-repeat:no-repeat; background-position:right 12px center; transition:border-color .2s;}
+  #quality:hover{border-color:#2e3842;}
   /* Stage */
-  .stage{flex:1; display:flex; padding:22px 26px;}
-  .screen{
-    flex:1; position:relative; border-radius:var(--radius); overflow:hidden;
-    background:#000; box-shadow:var(--shadow); border:1px solid rgba(255,255,255,.04);
-  }
+  .stage{flex:1; display:flex; padding:24px 30px 30px;}
+  .screen{position:relative; flex:1; border-radius:var(--radius); overflow:hidden; background:#000; cursor:pointer;
+    box-shadow:0 34px 90px rgba(0,0,0,.62), 0 0 0 1px rgba(255,255,255,.05);}
+  .screen::before{content:""; position:absolute; inset:0; z-index:4; pointer-events:none; border-radius:var(--radius);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
   .screen video, .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; object-fit:contain;}
-  .status{
-    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-    color:var(--muted); font-size:14px; font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
-    display:flex; flex-direction:column; align-items:center; gap:12px;
-  }
-  .status:not(:empty)::before{content:""; width:26px; height:26px; border-radius:50%; border:2.5px solid rgba(255,255,255,.15); border-top-color:var(--accent); animation:spin 1s linear infinite;}
+  .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
+    font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
+    display:flex; flex-direction:column; align-items:center; gap:14px;}
+  .status:not(:empty)::before{content:""; width:28px; height:28px; border-radius:50%;
+    border:2.5px solid rgba(255,255,255,.14); border-top-color:var(--accent); animation:spin 1s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
-  .badge{
-    position:absolute; top:14px; left:14px; z-index:3;
-    display:flex; align-items:center; gap:8px;
-    padding:7px 12px; border-radius:999px;
-    background:rgba(8,10,13,.62); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
-    border:1px solid rgba(255,255,255,.10);
-    color:var(--text); font-size:12px; font-weight:600; letter-spacing:.02em;
-    box-shadow:0 6px 20px rgba(0,0,0,.35);
-  }
+  .badge{position:absolute; top:16px; left:16px; z-index:5; display:flex; align-items:center; gap:8px; padding:7px 13px;
+    border-radius:999px; background:rgba(6,8,10,.6); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.11); color:var(--text); font-size:12px; font-weight:600; letter-spacing:.02em;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);}
   .badge .dot{width:8px; height:8px; border-radius:50%; background:var(--accent); flex:none;}
-  .badge.live .dot{background:var(--live); box-shadow:0 0 0 0 rgba(34,197,94,.6); animation:pulse 1.8s infinite;}
-  /* Footer */
-  footer{
-    display:flex; gap:18px; flex-wrap:wrap; align-items:center; justify-content:space-between;
-    padding:13px 26px; font-size:12px; color:var(--muted-2);
-    background:rgba(12,16,20,.6); border-top:1px solid var(--line);
-  }
-  footer .note{max-width:62ch; line-height:1.55;}
-  .custom{display:flex; align-items:center; gap:8px; color:var(--muted);}
-  .custom input{background:var(--panel); border:1px solid var(--line); color:var(--text); padding:7px 11px; border-radius:9px; font-family:inherit; font-size:13px; width:158px; outline:none; transition:border-color .18s;}
-  .custom input:focus{border-color:var(--accent);}
-  .custom button{background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 14px; border-radius:9px; cursor:pointer; font-family:inherit; font-size:13px; font-weight:500; transition:all .18s;}
-  .custom button:hover{background:var(--accent); color:#0b0e11; border-color:var(--accent);}
-  @media(max-width:640px){
-    header{padding:12px 16px;} .stage{padding:14px 16px;} footer{padding:12px 16px;}
-    .brand .sub{display:none;} .controls{width:100%;}
+  .badge.live .dot{background:var(--live); animation:pulse 1.8s infinite;}
+  .hint{position:absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:5; display:none; align-items:center; gap:8px;
+    padding:9px 16px; border-radius:999px; background:rgba(6,8,10,.62); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.11); color:var(--text); font-size:12.5px; font-weight:500; box-shadow:0 8px 24px rgba(0,0,0,.4);}
+  .hint.show{display:flex; animation:hintFade 5.5s ease forwards;}
+  .hint svg{width:15px; height:15px; fill:var(--accent);}
+  @keyframes hintFade{0%{opacity:0; transform:translateX(-50%) translateY(8px);}12%,72%{opacity:1; transform:translateX(-50%) translateY(0);}100%{opacity:0; transform:translateX(-50%) translateY(8px); visibility:hidden;}}
+  @media(max-width:680px){
+    header{padding:13px 16px; gap:12px;} .stage{padding:14px 16px 18px;}
+    .brand .sub{display:none;} .controls{width:100%;} .seg button{padding:7px 12px;}
   }
 </style>
 </head>
@@ -135,25 +116,19 @@
     </div>
   </header>
   <div class="stage">
-    <div class="screen">
+    <div class="screen" id="screen">
       <div class="badge" id="badge" style="display:none"><span class="dot"></span><span id="badgeText"></span></div>
       <div class="status" id="status"></div>
+      <div class="hint" id="hint"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
       <video id="video" playsinline controls style="display:none"></video>
       <iframe id="frame" src="" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen style="display:none"></iframe>
     </div>
   </div>
-  <footer>
-    <span class="note">优先播放 Bloomberg 官方直播流（由 Bloomberg 按你所在地区路由，亚洲即亚洲节目），默认锁定最高画质。静音自动播放，点击画面可取消静音。</span>
-    <span class="custom">YouTube 视频ID <input id="vid" placeholder="如 f39oHo6vFLg"><button onclick="playCustom()">播放</button></span>
-  </footer>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
-  // 复刻原项目（worldmonitor）的真实播放逻辑：Bloomberg 在 web 端优先走
-  //   https://www.bloomberg.com/media-manifest/streams/us.m3u8
-  // 这条流由 Bloomberg CDN 按观看者所在地区路由，亚洲观看者拿到的就是亚洲节目。
-  // HLS 失败时才回退到 YouTube @markets 直播。
+  // 复刻原项目（worldmonitor）逻辑：Bloomberg 优先走官方按地区路由的 HLS 流，失败才回退 YouTube。
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
-  var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg"; // @markets = Bloomberg Television
+  var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg"; // @markets = Bloomberg Television（1080p60）
 
   var video = document.getElementById("video");
   var frame = document.getElementById("frame");
@@ -162,127 +137,86 @@
   var qualitySel = document.getElementById("quality");
   var badge = document.getElementById("badge");
   var badgeText = document.getElementById("badgeText");
+  var hintEl = document.getElementById("hint");
+  var screenEl = document.getElementById("screen");
   var hls = null;
 
-  function setStatus(t) { statusEl.textContent = t || ""; }
-  function setBadge(text, live) {
-    if (!text) { badge.style.display = "none"; return; }
-    badge.style.display = "flex";
-    badge.className = "badge" + (live ? " live" : "");
-    badgeText.textContent = text;
+  function setStatus(t){ statusEl.textContent = t || ""; }
+  function setBadge(text, live){
+    if(!text){ badge.style.display="none"; return; }
+    badge.style.display="flex"; badge.className="badge"+(live?" live":""); badgeText.textContent=text;
   }
-  function setActive(btn) {
-    var btns = channelsEl.querySelectorAll("button");
-    for (var i = 0; i < btns.length; i++) btns[i].classList.remove("active");
-    if (btn) btn.classList.add("active");
+  function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
+  function setActive(btn){
+    var btns=channelsEl.querySelectorAll("button");
+    for(var i=0;i<btns.length;i++) btns[i].classList.remove("active");
+    if(btn) btn.classList.add("active");
   }
-  function destroyHls() { if (hls) { hls.destroy(); hls = null; } }
-  function showVideo() { video.style.display = "block"; frame.style.display = "none"; frame.src = ""; }
-  function showFrame() { frame.style.display = "block"; video.style.display = "none"; destroyHls(); video.removeAttribute("src"); qualitySel.style.display = "none"; }
+  function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
+  function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
+  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); qualitySel.style.display="none"; hintEl.classList.remove("show"); }
 
-  function levelLabel(l) {
-    if (l && l.height) return l.height + "p";
-    if (l && l.bitrate) return Math.round(l.bitrate / 1000) + "k";
+  function levelLabel(l){
+    if(l && l.height) return l.height+"p";
+    if(l && l.bitrate) return Math.round(l.bitrate/1000)+"k";
     return "自动";
   }
 
-  function playYouTube(reason) {
-    showFrame();
-    setStatus("");
-    setBadge("已回退：YouTube" + (reason ? "（" + reason + "）" : ""), false);
-    frame.src = "https://www.youtube.com/embed/live_stream?channel=" + YT_CHANNEL + "&autoplay=1&mute=1";
+  function playYouTube(reason){
+    showFrame(); setStatus("");
+    setBadge("YouTube · 1080p"+(reason?"（"+reason+"）":""), true);
+    frame.src="https://www.youtube.com/embed/live_stream?channel="+YT_CHANNEL+"&autoplay=1&mute=1";
   }
 
-  function buildQualityMenu() {
-    qualitySel.innerHTML = "";
-    var auto = document.createElement("option");
-    auto.value = "-1"; auto.textContent = "画质：自动";
-    qualitySel.appendChild(auto);
-    for (var i = hls.levels.length - 1; i >= 0; i--) {
-      var o = document.createElement("option");
-      o.value = String(i); o.textContent = "画质：" + levelLabel(hls.levels[i]);
-      qualitySel.appendChild(o);
+  function buildQualityMenu(){
+    qualitySel.innerHTML="";
+    var auto=document.createElement("option"); auto.value="-1"; auto.textContent="画质：自动"; qualitySel.appendChild(auto);
+    for(var i=hls.levels.length-1;i>=0;i--){
+      var o=document.createElement("option"); o.value=String(i); o.textContent="画质："+levelLabel(hls.levels[i]); qualitySel.appendChild(o);
     }
-    var top = hls.levels.length - 1;
-    qualitySel.value = String(top);   // 默认锁定最高画质
-    hls.currentLevel = top;
-    qualitySel.style.display = "inline-block";
+    var top=hls.levels.length-1; qualitySel.value=String(top); hls.currentLevel=top; qualitySel.style.display="inline-block";
   }
 
-  function playHls() {
-    showVideo();
-    setStatus("正在连接 Bloomberg 官方直播…");
-    setBadge("连接中…", false);
-    destroyHls();
-    video.muted = true;
-    var fellBack = false;
-    function fallback(reason) { if (fellBack) return; fellBack = true; playYouTube(reason); }
-
-    if (window.Hls && window.Hls.isSupported()) {
-      hls = new window.Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        startLevel: -1,
-        maxBufferLength: 30,
-        backBufferLength: 30,
-        maxMaxBufferLength: 60,
-        liveSyncDurationCount: 4,
-        abrBandWidthFactor: 0.95,
-        abrBandWidthUpFactor: 0.75,
-        fragLoadingMaxRetry: 6,
-        manifestLoadingMaxRetry: 4
+  function playHls(){
+    showVideo(); setStatus("正在连接 Bloomberg 官方直播…"); setBadge("连接中…", false);
+    destroyHls(); video.muted=true;
+    var fellBack=false;
+    function fallback(reason){ if(fellBack) return; fellBack=true; playYouTube(reason); }
+    if(window.Hls && window.Hls.isSupported()){
+      hls=new window.Hls({ enableWorker:true, lowLatencyMode:false, startLevel:-1, maxBufferLength:30, backBufferLength:30,
+        maxMaxBufferLength:60, liveSyncDurationCount:4, abrBandWidthFactor:0.95, abrBandWidthUpFactor:0.75,
+        fragLoadingMaxRetry:6, manifestLoadingMaxRetry:4 });
+      hls.loadSource(HLS_URL); hls.attachMedia(video);
+      hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
+        setStatus(""); buildQualityMenu();
+        setBadge("Bloomberg 原生流 · "+levelLabel(hls.levels[hls.currentLevel]), true);
+        video.play().catch(function(){}); showHint();
       });
-      hls.loadSource(HLS_URL);
-      hls.attachMedia(video);
-      hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
-        setStatus("");
-        buildQualityMenu();
-        setBadge("Bloomberg 原生流 · " + levelLabel(hls.levels[hls.currentLevel]), true);
-        video.play().catch(function () {});
-      });
-      hls.on(window.Hls.Events.LEVEL_SWITCHED, function (_e, data) {
-        var lv = hls.levels[data.level];
-        setBadge("Bloomberg 原生流 · " + levelLabel(lv), true);
-      });
-      hls.on(window.Hls.Events.ERROR, function (_e, data) {
-        if (data && data.fatal) { destroyHls(); fallback("原生流不可用"); }
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari 原生 HLS：自动选最高自适应，无法枚举档位
-      video.src = HLS_URL;
-      setBadge("Bloomberg 原生流 · 自适应（Safari）", true);
-      video.addEventListener("loadedmetadata", function () { setStatus(""); video.play().catch(function () {}); }, { once: true });
-      video.addEventListener("error", function () { fallback("原生流不可用"); }, { once: true });
-    } else {
-      fallback("浏览器不支持 HLS");
-    }
+      hls.on(window.Hls.Events.LEVEL_SWITCHED, function(_e,data){ setBadge("Bloomberg 原生流 · "+levelLabel(hls.levels[data.level]), true); });
+      hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); fallback("原生流不可用"); } });
+    } else if(video.canPlayType("application/vnd.apple.mpegurl")){
+      video.src=HLS_URL; setBadge("Bloomberg 原生流 · 自适应（Safari）", true);
+      video.addEventListener("loadedmetadata", function(){ setStatus(""); video.play().catch(function(){}); showHint(); }, {once:true});
+      video.addEventListener("error", function(){ fallback("原生流不可用"); }, {once:true});
+    } else { fallback("浏览器不支持 HLS"); }
   }
 
-  qualitySel.onchange = function () {
-    if (!hls) return;
-    hls.currentLevel = parseInt(qualitySel.value, 10); // -1 = 自动 ABR
-  };
+  qualitySel.onchange=function(){ if(hls) hls.currentLevel=parseInt(qualitySel.value,10); };
 
-  function playCustom() {
-    var v = document.getElementById("vid").value.trim();
-    if (!v) return;
-    setActive(null);
-    showFrame();
-    setStatus("");
-    setBadge("YouTube 自定义视频", false);
-    frame.src = "https://www.youtube.com/embed/" + v + "?autoplay=1&mute=1&rel=0&playsinline=1";
-  }
+  // 点击画面取消静音（仅原生流）
+  screenEl.addEventListener("click", function(){
+    if(video.style.display!=="none" && video.muted){ video.muted=false; video.play().catch(function(){}); hintEl.classList.remove("show"); }
+  });
 
-  var CHANNELS = [
-    { name: "Bloomberg TV（按地区）", fn: playHls },
-    { name: "YouTube 备用", fn: function () { playYouTube(); } }
+  var CHANNELS=[
+    { name:"Bloomberg TV（按地区）", fn:playHls },
+    { name:"YouTube · 1080p", fn:function(){ playYouTube(); } }
   ];
-  CHANNELS.forEach(function (ch, i) {
-    var btn = document.createElement("button");
-    btn.textContent = ch.name;
-    btn.onclick = function () { setActive(btn); ch.fn(); };
+  CHANNELS.forEach(function(ch,i){
+    var btn=document.createElement("button"); btn.textContent=ch.name;
+    btn.onclick=function(){ setActive(btn); ch.fn(); };
     channelsEl.appendChild(btn);
-    if (i === 0) { setActive(btn); ch.fn(); }
+    if(i===0){ setActive(btn); ch.fn(); }
   });
 </script>
 </body>
