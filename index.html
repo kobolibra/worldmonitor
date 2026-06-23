@@ -143,19 +143,23 @@
   function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
   function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; }
 
-  // ---- Captions: bottom-center, per-line stacking, lightweight ----
-  function reflowCaptions(track){
-    var cues = track.activeCues;
-    if(!cues || !cues.length) return;
-    var n = cues.length;
-    for(var i=0;i<n;i++){
+  // ---- Captions: hand off to the browser's native bottom rendering (smooth, no per-frame reflow) ----
+  // hls.js' CEA-608 cues can carry odd line positions; we reset each cue ONCE to auto so the
+  // browser stacks them natively at the bottom — exactly like the original project (no jank).
+  function normalizeCaptions(track){
+    var cues = track.cues;
+    if(!cues) return;
+    for(var i=0;i<cues.length;i++){
       var c=cues[i];
-      try{ c.snapToLines=false; c.lineAlign="start"; c.line = 86 - (n-1-i)*7; c.position=50; c.align="center"; c.size=84; }catch(e){}
+      if(c.__norm) continue;
+      c.__norm = 1;
+      try{ c.snapToLines = true; c.line = "auto"; c.position = "auto"; c.align = "center"; }catch(e){}
     }
   }
   function bindCaptionTrack(t){
     if(!t || (t.kind!=="captions" && t.kind!=="subtitles")) return;
-    t.addEventListener("cuechange", function(){ reflowCaptions(t); });
+    normalizeCaptions(t);
+    t.addEventListener("cuechange", function(){ normalizeCaptions(t); });
   }
   if(video.textTracks){
     for(var ti=0; ti<video.textTracks.length; ti++) bindCaptionTrack(video.textTracks[ti]);
@@ -216,11 +220,10 @@
     var fellBack=false;
     function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
-      // 低延迟：贴近直播边缘 + 轻微追帧，缓冲适中，默认 ABR 自适应
-      hls=new window.Hls({ enableWorker:true, lowLatencyMode:true,
-        liveSyncDurationCount:3, liveMaxLatencyDurationCount:10, maxLiveSyncPlaybackRate:1.5,
-        maxBufferLength:16, backBufferLength:8, maxMaxBufferLength:40,
-        abrBandWidthFactor:0.95, abrBandWidthUpFactor:0.7,
+      // 流畅优先：稳定缓冲 + 1x 播放（不追帧），ABR 自适应，贴近原项目的顺滑体验
+      hls=new window.Hls({ enableWorker:true,
+        liveSyncDurationCount:4, liveMaxLatencyDurationCount:14,
+        maxBufferLength:30, backBufferLength:12, maxMaxBufferLength:60,
         fragLoadingMaxRetry:6, manifestLoadingMaxRetry:4 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
