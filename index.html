@@ -61,12 +61,11 @@
     box-shadow:0 34px 90px rgba(0,0,0,.62), 0 0 0 1px rgba(255,255,255,.05);}
   .screen::before{content:""; position:absolute; inset:0; z-index:4; pointer-events:none; border-radius:var(--radius);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
-  /* 视频元素约束为 16:9、在宽高两个方向都不超出屏幕，黑边交给外层；
-     元素即画面，字幕只会落在画面内 */
   .screen video{position:relative; z-index:1; width:auto; height:auto; max-width:100%; max-height:100%;
     aspect-ratio:16/9; object-fit:contain; background:#000;}
   .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000;}
-  .screen video::cue{ background:rgba(0,0,0,.72); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:1.05em; line-height:1.45; text-shadow:0 1px 2px rgba(0,0,0,.55); }
+  /* 字幕外观：较小字号 + 半透明衡底 */
+  .screen video::cue{ background:rgba(0,0,0,.7); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:0.72em; line-height:1.35; text-shadow:0 1px 2px rgba(0,0,0,.6); }
   .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
     font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
     display:flex; flex-direction:column; align-items:center; gap:14px;}
@@ -121,6 +120,30 @@
   function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
   function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
   function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); }
+
+  // 将当前同时显示的字幕行移到底部居中，按行向下堆叠（最新的在最下），避免重叠
+  function reflowCaptions(track){
+    var cues = track.activeCues;
+    if(!cues || !cues.length) return;
+    var n = cues.length;
+    for(var i=0;i<n;i++){
+      var c=cues[i];
+      try{
+        c.snapToLines=false;
+        c.lineAlign="start";
+        c.line = 86 - (n-1-i)*7;   // 靠底，逐行上移，保留行序
+        c.position=50; c.align="center"; c.size=84;
+      }catch(e){}
+    }
+  }
+  function bindCaptionTrack(t){
+    if(!t || (t.kind!=="captions" && t.kind!=="subtitles")) return;
+    t.addEventListener("cuechange", function(){ reflowCaptions(t); });
+  }
+  if(video.textTracks){
+    for(var ti=0; ti<video.textTracks.length; ti++) bindCaptionTrack(video.textTracks[ti]);
+    video.textTracks.addEventListener("addtrack", function(e){ bindCaptionTrack(e.track); });
+  }
 
   function playYouTube(){
     showFrame(); setStatus("");
