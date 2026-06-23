@@ -64,6 +64,8 @@
   .screen::before{content:""; position:absolute; inset:0; z-index:4; pointer-events:none; border-radius:var(--radius);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
   .screen video, .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; object-fit:contain;}
+  /* 字幕：保持原生底部位置，仅优化外观与可读性 */
+  .screen video::cue{ background:rgba(0,0,0,.72); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:1.05em; line-height:1.45; text-shadow:0 1px 2px rgba(0,0,0,.55); white-space:pre-line; }
   .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
     font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
     display:flex; flex-direction:column; align-items:center; gap:14px;}
