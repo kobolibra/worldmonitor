@@ -29,7 +29,6 @@
     animation:appIn .6s ease both;
   }
   @keyframes appIn{from{opacity:0; transform:translateY(6px);}to{opacity:1; transform:none;}}
-  /* Header */
   header{
     position:relative; z-index:10;
     display:flex; align-items:center; gap:20px; flex-wrap:wrap;
@@ -41,14 +40,12 @@
   header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
     background:linear-gradient(90deg,transparent,rgba(255,106,0,.5),transparent);}
   .brand{display:flex; align-items:center; gap:13px;}
-  /* 官方 Bloomberg 图标：黑底白「B」 */
   .brand .mark{
     width:36px; height:36px; border-radius:7px; flex:none;
     background:#000; display:flex; align-items:center; justify-content:center;
     border:1px solid rgba(255,255,255,.16); box-shadow:0 6px 18px rgba(0,0,0,.55);
   }
   .brand .mark b{font-family:var(--hel); font-weight:700; font-size:23px; line-height:1; color:#fff; transform:translateY(-.5px);}
-  /* 官方 Bloomberg 字标：Helvetica 粗体单色白 */
   .brand h1{font-family:var(--hel); font-size:21px; font-weight:700; letter-spacing:-.022em; line-height:1.05; color:#fff;}
   .brand h1 .live{font-weight:400; color:var(--muted); margin-left:7px; letter-spacing:0;}
   .brand .sub{font-family:var(--hel); font-size:10px; color:var(--muted-2); letter-spacing:.2em; text-transform:uppercase; margin-top:4px;}
@@ -57,15 +54,19 @@
     font-size:11px; font-weight:700; letter-spacing:.14em;}
   .live-pill .pulse{width:7px; height:7px; border-radius:50%; background:var(--live); animation:pulse 1.8s infinite;}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(39,209,124,.55);}70%{box-shadow:0 0 0 8px rgba(39,209,124,0);}100%{box-shadow:0 0 0 0 rgba(39,209,124,0);}}
-  /* Stage */
   .stage{flex:1; display:flex; padding:24px 30px 30px;}
-  .screen{position:relative; flex:1; border-radius:var(--radius); overflow:hidden; background:#000; cursor:pointer;
+  .screen{position:relative; flex:1; display:flex; align-items:center; justify-content:center;
+    border-radius:var(--radius); overflow:hidden; background:#000; cursor:pointer;
     box-shadow:0 34px 90px rgba(0,0,0,.62), 0 0 0 1px rgba(255,255,255,.05);}
   .screen::before{content:""; position:absolute; inset:0; z-index:4; pointer-events:none; border-radius:var(--radius);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
-  .screen video, .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; object-fit:contain;}
-  /* 字幕：保持原生底部位置，仅优化外观与可读性 */
-  .screen video::cue{ background:rgba(0,0,0,.72); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:1.05em; line-height:1.45; text-shadow:0 1px 2px rgba(0,0,0,.55); white-space:pre-line; }
+  /* 视频元素约束为 16:9 并居中，黑边交给外层 .screen；
+     这样元素本身就等于画面，字幕只会落在画面内，不会溢出到黑边 */
+  .screen video{position:relative; z-index:1; width:auto; height:auto; max-width:100%; max-height:100%;
+    aspect-ratio:16/9; object-fit:contain; background:#000;}
+  .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000;}
+  /* 字幕外观 */
+  .screen video::cue{ background:rgba(0,0,0,.72); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:1.05em; line-height:1.45; text-shadow:0 1px 2px rgba(0,0,0,.55); }
   .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
     font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
     display:flex; flex-direction:column; align-items:center; gap:14px;}
@@ -105,9 +106,8 @@
   </div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
-  // Bloomberg 全球 follow-the-sun 直播流；失败自动回退 YouTube。
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
-  var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg"; // @markets = Bloomberg Television
+  var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg";
 
   var video = document.getElementById("video");
   var frame = document.getElementById("frame");
@@ -121,6 +121,24 @@
   function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
   function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
   function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); }
+
+  // 将字幕 cue 强制钉到底部居中，避免出现在顶部/左侧
+  function pinCues(track){
+    if(!track || !track.cues) return;
+    for(var i=0;i<track.cues.length;i++){
+      var c=track.cues[i];
+      try{ c.snapToLines=false; c.line=92; c.lineAlign="end"; c.position=50; c.align="center"; c.size=86; }catch(e){}
+    }
+  }
+  function bindTrack(t){
+    if(!t || (t.kind!=="captions" && t.kind!=="subtitles")) return;
+    pinCues(t);
+    t.addEventListener("cuechange", function(){ pinCues(t); });
+  }
+  if(video.textTracks){
+    for(var i=0;i<video.textTracks.length;i++) bindTrack(video.textTracks[i]);
+    video.textTracks.addEventListener("addtrack", function(e){ bindTrack(e.track); });
+  }
 
   function playYouTube(){
     showFrame(); setStatus("");
@@ -138,7 +156,7 @@
         fragLoadingMaxRetry:6, manifestLoadingMaxRetry:4 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
-        setStatus(""); hls.currentLevel = hls.levels.length - 1; // 锁定最高画质
+        setStatus(""); hls.currentLevel = hls.levels.length - 1;
         video.play().catch(function(){}); showHint();
       });
       hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); fallback(); } });
@@ -149,7 +167,6 @@
     } else { fallback(); }
   }
 
-  // 点击画面取消静音（仅原生流）
   screenEl.addEventListener("click", function(){
     if(video.style.display!=="none" && video.muted){ video.muted=false; video.play().catch(function(){}); hintEl.classList.remove("show"); }
   });
