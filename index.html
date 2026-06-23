@@ -14,9 +14,13 @@
   .channels button { background:#1d232b; color:#cfd3d8; border:1px solid #2a323c; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:13px; transition:.15s; }
   .channels button:hover { background:#262d36; }
   .channels button.active { background:#fa6a00; color:#0b0e11; border-color:#fa6a00; font-weight:600; }
+  .channels select { background:#1d232b; color:#cfd3d8; border:1px solid #2a323c; padding:6px 8px; border-radius:6px; font-size:13px; }
   .player { flex:1; position:relative; background:#000; }
   .player video, .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; object-fit:contain; }
   .status { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#8a9099; font-size:14px; text-align:center; z-index:2; pointer-events:none; }
+  .badge { position:absolute; top:12px; left:12px; z-index:3; background:rgba(0,0,0,.6); border:1px solid #2a323c; color:#e8eaed; font-size:12px; padding:5px 10px; border-radius:6px; display:flex; align-items:center; gap:7px; pointer-events:none; }
+  .badge .dot { width:8px; height:8px; border-radius:50%; background:#fa6a00; }
+  .badge.live .dot { background:#21c45d; }
   footer { padding:8px 20px; font-size:12px; color:#6b7178; background:#13171c; border-top:1px solid #222; display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
   .custom input { background:#1d232b; border:1px solid #2a323c; color:#e8eaed; padding:5px 8px; border-radius:6px; font-size:13px; width:150px; }
   .custom button { background:#1d232b; border:1px solid #2a323c; color:#cfd3d8; padding:5px 10px; border-radius:6px; cursor:pointer; }
@@ -25,24 +29,26 @@
 <body>
   <header>
     <h1><span>Bloomberg</span> Live</h1>
-    <div class="channels" id="channels"></div>
+    <div class="channels" id="channels">
+      <select id="quality" style="display:none"></select>
+    </div>
   </header>
   <div class="player">
+    <div class="badge" id="badge" style="display:none"><span class="dot"></span><span id="badgeText"></span></div>
     <div class="status" id="status"></div>
     <video id="video" playsinline controls style="display:none"></video>
     <iframe id="frame" src="" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen style="display:none"></iframe>
   </div>
   <footer>
-    <span>优先播放 Bloomberg 官方直播流（由 Bloomberg 按你所在地区路由，亚洲即亚洲节目）；失败自动回退 YouTube。默认静音，点画面可取消静音。</span>
+    <span>优先播放 Bloomberg 官方直播流（按你所在地区路由，亚洲即亚洲节目）；默认锁定最高画质，可右上角切换。默认静音，点画面可取消静音。</span>
     <span class="custom">YouTube 视频ID: <input id="vid" placeholder="如 f39oHo6vFLg"><button onclick="playCustom()">播放</button></span>
   </footer>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
-  // 复刻原项目（worldmonitor）的真实播放逻辑：
-  // LiveNewsPanel.ts 中 bloomberg 在 web 端优先走 DIRECT_HLS_MAP['bloomberg'] =
+  // 复刻原项目（worldmonitor）的真实播放逻辑：Bloomberg 在 web 端优先走
   //   https://www.bloomberg.com/media-manifest/streams/us.m3u8
-  // 这条流由 Bloomberg CDN 按观看者所在地区路由，亚洲观看者拿到的就是亚洲节目，
-  // 这才是“显示你所在区域节目”的真正原因。HLS 失败时才回退到 YouTube @markets 直播。
+  // 这条流由 Bloomberg CDN 按观看者所在地区路由，亚洲观看者拿到的就是亚洲节目。
+  // HLS 失败时才回退到 YouTube @markets 直播。
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
   var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg"; // @markets = Bloomberg Television
 
@@ -50,9 +56,18 @@
   var frame = document.getElementById("frame");
   var statusEl = document.getElementById("status");
   var channelsEl = document.getElementById("channels");
+  var qualitySel = document.getElementById("quality");
+  var badge = document.getElementById("badge");
+  var badgeText = document.getElementById("badgeText");
   var hls = null;
 
   function setStatus(t) { statusEl.textContent = t || ""; }
+  function setBadge(text, live) {
+    if (!text) { badge.style.display = "none"; return; }
+    badge.style.display = "flex";
+    badge.className = "badge" + (live ? " live" : "");
+    badgeText.textContent = text;
+  }
   function setActive(btn) {
     var btns = channelsEl.querySelectorAll("button");
     for (var i = 0; i < btns.length; i++) btns[i].classList.remove("active");
@@ -60,35 +75,90 @@
   }
   function destroyHls() { if (hls) { hls.destroy(); hls = null; } }
   function showVideo() { video.style.display = "block"; frame.style.display = "none"; frame.src = ""; }
-  function showFrame() { frame.style.display = "block"; video.style.display = "none"; destroyHls(); video.removeAttribute("src"); }
+  function showFrame() { frame.style.display = "block"; video.style.display = "none"; destroyHls(); video.removeAttribute("src"); qualitySel.style.display = "none"; }
 
-  function playYouTube() {
+  function levelLabel(l) {
+    if (l && l.height) return l.height + "p";
+    if (l && l.bitrate) return Math.round(l.bitrate / 1000) + "k";
+    return "自动";
+  }
+
+  function playYouTube(reason) {
     showFrame();
     setStatus("");
+    setBadge("已回退：YouTube" + (reason ? "（" + reason + "）" : ""), false);
     frame.src = "https://www.youtube.com/embed/live_stream?channel=" + YT_CHANNEL + "&autoplay=1&mute=1";
+  }
+
+  function buildQualityMenu() {
+    qualitySel.innerHTML = "";
+    var auto = document.createElement("option");
+    auto.value = "-1"; auto.textContent = "画质：自动";
+    qualitySel.appendChild(auto);
+    for (var i = hls.levels.length - 1; i >= 0; i--) {
+      var o = document.createElement("option");
+      o.value = String(i); o.textContent = "画质：" + levelLabel(hls.levels[i]);
+      qualitySel.appendChild(o);
+    }
+    var top = hls.levels.length - 1;
+    qualitySel.value = String(top);   // 默认锁定最高画质
+    hls.currentLevel = top;
+    qualitySel.style.display = "inline-block";
   }
 
   function playHls() {
     showVideo();
     setStatus("正在连接 Bloomberg 官方直播…");
+    setBadge("连接中…", false);
     destroyHls();
     video.muted = true;
     var fellBack = false;
-    function fallback() { if (fellBack) return; fellBack = true; playYouTube(); }
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = HLS_URL;
-      video.addEventListener("loadedmetadata", function () { setStatus(""); video.play().catch(function(){}); }, { once: true });
-      video.addEventListener("error", fallback, { once: true });
-    } else if (window.Hls && window.Hls.isSupported()) {
-      hls = new window.Hls({ lowLatencyMode: true, enableWorker: true });
+    function fallback(reason) { if (fellBack) return; fellBack = true; playYouTube(reason); }
+
+    if (window.Hls && window.Hls.isSupported()) {
+      hls = new window.Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        startLevel: -1,
+        maxBufferLength: 30,
+        backBufferLength: 30,
+        maxMaxBufferLength: 60,
+        liveSyncDurationCount: 4,
+        abrBandWidthFactor: 0.95,
+        abrBandWidthUpFactor: 0.75,
+        fragLoadingMaxRetry: 6,
+        manifestLoadingMaxRetry: 4
+      });
       hls.loadSource(HLS_URL);
       hls.attachMedia(video);
-      hls.on(window.Hls.Events.MANIFEST_PARSED, function () { setStatus(""); video.play().catch(function(){}); });
-      hls.on(window.Hls.Events.ERROR, function (_e, data) { if (data && data.fatal) { destroyHls(); fallback(); } });
+      hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
+        setStatus("");
+        buildQualityMenu();
+        setBadge("Bloomberg 原生流 · " + levelLabel(hls.levels[hls.currentLevel]), true);
+        video.play().catch(function () {});
+      });
+      hls.on(window.Hls.Events.LEVEL_SWITCHED, function (_e, data) {
+        var lv = hls.levels[data.level];
+        setBadge("Bloomberg 原生流 · " + levelLabel(lv), true);
+      });
+      hls.on(window.Hls.Events.ERROR, function (_e, data) {
+        if (data && data.fatal) { destroyHls(); fallback("原生流不可用"); }
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // Safari 原生 HLS：自动选最高自适应，无法枚举档位
+      video.src = HLS_URL;
+      setBadge("Bloomberg 原生流 · 自适应（Safari）", true);
+      video.addEventListener("loadedmetadata", function () { setStatus(""); video.play().catch(function () {}); }, { once: true });
+      video.addEventListener("error", function () { fallback("原生流不可用"); }, { once: true });
     } else {
-      fallback();
+      fallback("浏览器不支持 HLS");
     }
   }
+
+  qualitySel.onchange = function () {
+    if (!hls) return;
+    hls.currentLevel = parseInt(qualitySel.value, 10); // -1 = 自动 ABR
+  };
 
   function playCustom() {
     var v = document.getElementById("vid").value.trim();
@@ -96,18 +166,19 @@
     setActive(null);
     showFrame();
     setStatus("");
+    setBadge("YouTube 自定义视频", false);
     frame.src = "https://www.youtube.com/embed/" + v + "?autoplay=1&mute=1&rel=0&playsinline=1";
   }
 
   var CHANNELS = [
     { name: "Bloomberg TV（按地区）", fn: playHls },
-    { name: "YouTube 备用", fn: playYouTube }
+    { name: "YouTube 备用", fn: function () { playYouTube(); } }
   ];
   CHANNELS.forEach(function (ch, i) {
     var btn = document.createElement("button");
     btn.textContent = ch.name;
     btn.onclick = function () { setActive(btn); ch.fn(); };
-    channelsEl.appendChild(btn);
+    channelsEl.insertBefore(btn, qualitySel);
     if (i === 0) { setActive(btn); ch.fn(); }
   });
 </script>
