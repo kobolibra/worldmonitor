@@ -11,7 +11,7 @@
   :root{
     --bg:#060709; --line:#1c242d;
     --text:#f2f4f7; --muted:#98a2ad; --muted-2:#616a74;
-    --accent:#ff6a00; --live:#27d17c;
+    --accent:#ff6a00; --accent-2:#ff9a4d; --live:#27d17c;
     --radius:16px;
     --hel:'Helvetica Neue',Helvetica,Arial,sans-serif;
   }
@@ -40,7 +40,6 @@
   }
   header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
     background:linear-gradient(90deg,transparent,rgba(255,106,0,.45),transparent);}
-  /* 官方 Bloomberg 字标：Helvetica 粗体、纯白、紧字距、单色 */
   .brand{display:flex; align-items:center;}
   .brand h1{font-family:var(--hel); font-size:25px; font-weight:700; letter-spacing:-.025em; line-height:1; color:#fff;}
   .live-pill{margin-left:auto; display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:999px;
@@ -58,6 +57,31 @@
     aspect-ratio:16/9; object-fit:contain; background:#000;}
   .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000;}
   .screen video::cue{ background:rgba(0,0,0,.7); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:0.72em; line-height:1.35; text-shadow:0 1px 2px rgba(0,0,0,.6); }
+
+  /* Quality selector */
+  .quality{position:absolute; top:14px; right:14px; z-index:6; opacity:0; transform:translateY(-4px);
+    transition:opacity .25s ease, transform .25s ease; pointer-events:none;}
+  .screen:hover .quality, .quality.open{opacity:1; transform:none; pointer-events:auto;}
+  .q-btn{display:inline-flex; align-items:center; gap:7px; padding:7px 11px; border-radius:10px;
+    background:rgba(8,11,14,.6); backdrop-filter:blur(14px) saturate(150%); -webkit-backdrop-filter:blur(14px) saturate(150%);
+    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; font-family:'Inter',sans-serif; font-size:12px; font-weight:600;
+    letter-spacing:.01em; cursor:pointer; transition:border-color .2s, background .2s;}
+  .q-btn:hover{background:rgba(8,11,14,.8); border-color:rgba(255,255,255,.28);}
+  .q-btn svg{width:14px; height:14px;}
+  .q-menu{position:absolute; top:calc(100% + 6px); right:0; min-width:140px; padding:6px; border-radius:12px;
+    background:rgba(8,11,14,.84); backdrop-filter:blur(18px) saturate(150%); -webkit-backdrop-filter:blur(18px) saturate(150%);
+    border:1px solid rgba(255,255,255,.12); box-shadow:0 18px 44px rgba(0,0,0,.55); display:flex; flex-direction:column; gap:2px;}
+  .q-item{display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:8px; background:transparent; border:0;
+    color:#cfd6dd; font-family:'Inter',sans-serif; font-size:12.5px; font-weight:500; cursor:pointer; text-align:left; width:100%;
+    transition:background .15s, color .15s;}
+  .q-item:hover{background:rgba(255,255,255,.07); color:#fff;}
+  .q-item.active{color:#fff;}
+  .q-item .tick{width:13px; height:13px; flex:none; opacity:0;}
+  .q-item.active .tick{opacity:1;}
+  .q-item .lbl{flex:1;}
+  .q-item .hd{font-size:9px; font-weight:700; letter-spacing:.05em; padding:1px 5px; border-radius:4px;
+    background:rgba(255,106,0,.16); color:var(--accent-2);}
+
   .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
     font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
     display:flex; flex-direction:column; align-items:center; gap:14px;}
@@ -84,6 +108,14 @@
   <div class="stage">
     <div class="screen" id="screen">
       <div class="status" id="status"></div>
+      <div class="quality" id="quality" hidden>
+        <button class="q-btn" id="qBtn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+          <span id="qLabel">Auto</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:11px;height:11px;opacity:.6"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="q-menu" id="qMenu" hidden></div>
+      </div>
       <div class="hint" id="hint"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
       <video id="video" playsinline controls style="display:none"></video>
       <iframe id="frame" src="" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen style="display:none"></iframe>
@@ -99,26 +131,26 @@
   var statusEl = document.getElementById("status");
   var hintEl = document.getElementById("hint");
   var screenEl = document.getElementById("screen");
+  var qWrap = document.getElementById("quality");
+  var qBtn = document.getElementById("qBtn");
+  var qLabel = document.getElementById("qLabel");
+  var qMenu = document.getElementById("qMenu");
   var hls = null;
 
   function setStatus(t){ statusEl.textContent = t || ""; }
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
   function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
   function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
-  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); }
+  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; }
 
+  // ---- Captions: bottom-center, per-line stacking, lightweight ----
   function reflowCaptions(track){
     var cues = track.activeCues;
     if(!cues || !cues.length) return;
     var n = cues.length;
     for(var i=0;i<n;i++){
       var c=cues[i];
-      try{
-        c.snapToLines=false;
-        c.lineAlign="start";
-        c.line = 86 - (n-1-i)*7;
-        c.position=50; c.align="center"; c.size=84;
-      }catch(e){}
+      try{ c.snapToLines=false; c.lineAlign="start"; c.line = 86 - (n-1-i)*7; c.position=50; c.align="center"; c.size=84; }catch(e){}
     }
   }
   function bindCaptionTrack(t){
@@ -129,6 +161,49 @@
     for(var ti=0; ti<video.textTracks.length; ti++) bindCaptionTrack(video.textTracks[ti]);
     video.textTracks.addEventListener("addtrack", function(e){ bindCaptionTrack(e.track); });
   }
+
+  // ---- Quality selector (built from real manifest levels) ----
+  function levelLabel(l){ return l.height ? (l.height + "p") : (Math.round((l.bitrate||0)/1000) + "k"); }
+  function levelBadge(l){ return l.height>=1080 ? "FHD" : (l.height>=720 ? "HD" : ""); }
+  function tickSvg(){ return '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="#ff9a4d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>'; }
+  function itemHtml(level,label,badge){
+    return '<button class="q-item" type="button" data-level="'+level+'">'+tickSvg()+'<span class="lbl">'+label+'</span>'+(badge?'<span class="hd">'+badge+'</span>':'')+'</button>';
+  }
+  function buildQualityMenu(){
+    if(!hls || !hls.levels || !hls.levels.length){ qWrap.hidden=true; return; }
+    var idxs = hls.levels.map(function(l,i){return i;}).sort(function(a,b){
+      var la=hls.levels[a], lb=hls.levels[b];
+      return (lb.height||0)-(la.height||0) || (lb.bitrate||0)-(la.bitrate||0);
+    });
+    var seen={}, html = itemHtml("auto","Auto","");
+    idxs.forEach(function(i){ var l=hls.levels[i], h=l.height||0; if(seen[h]) return; seen[h]=1; html += itemHtml(String(i), levelLabel(l), levelBadge(l)); });
+    qMenu.innerHTML = html;
+    qWrap.hidden = false;
+    qMenu.querySelectorAll(".q-item").forEach(function(btn){
+      btn.addEventListener("click", function(e){
+        e.stopPropagation();
+        var v=btn.dataset.level;
+        hls.currentLevel = (v==="auto") ? -1 : parseInt(v,10);
+        setActiveQuality(v); closeQMenu();
+      });
+    });
+    setActiveQuality("auto");
+  }
+  function setActiveQuality(v){
+    qMenu.querySelectorAll(".q-item").forEach(function(b){ b.classList.toggle("active", b.dataset.level===v); });
+    if(v==="auto"){ updateAutoLabel(); }
+    else { var l=hls.levels[parseInt(v,10)]; if(l) qLabel.textContent = levelLabel(l); }
+  }
+  function updateAutoLabel(){
+    var active = qMenu.querySelector(".q-item.active");
+    if(!active || active.dataset.level!=="auto") return;
+    var suffix = (hls && hls.currentLevel>=0 && hls.levels[hls.currentLevel]) ? (" \u00b7 " + levelLabel(hls.levels[hls.currentLevel])) : "";
+    qLabel.textContent = "Auto" + suffix;
+  }
+  function closeQMenu(){ qMenu.hidden=true; qWrap.classList.remove("open"); }
+  qBtn.addEventListener("click", function(e){ e.stopPropagation(); var willOpen=qMenu.hidden; qMenu.hidden=!willOpen; qWrap.classList.toggle("open", willOpen); });
+  qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
+  document.addEventListener("click", function(){ closeQMenu(); });
 
   function playYouTube(){
     showFrame(); setStatus("");
@@ -141,16 +216,21 @@
     var fellBack=false;
     function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
-      hls=new window.Hls({ enableWorker:true, lowLatencyMode:false, startLevel:-1, maxBufferLength:30, backBufferLength:30,
-        maxMaxBufferLength:60, liveSyncDurationCount:4, abrBandWidthFactor:0.95, abrBandWidthUpFactor:0.75,
+      // 低延迟：贴近直播边缘 + 轻微追帧，缓冲适中，默认 ABR 自适应
+      hls=new window.Hls({ enableWorker:true, lowLatencyMode:true,
+        liveSyncDurationCount:3, liveMaxLatencyDurationCount:10, maxLiveSyncPlaybackRate:1.5,
+        maxBufferLength:16, backBufferLength:8, maxMaxBufferLength:40,
+        abrBandWidthFactor:0.95, abrBandWidthUpFactor:0.7,
         fragLoadingMaxRetry:6, manifestLoadingMaxRetry:4 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
-        setStatus(""); hls.currentLevel = hls.levels.length - 1;
+        setStatus(""); buildQualityMenu();
         video.play().catch(function(){}); showHint();
       });
+      hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){ updateAutoLabel(); });
       hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); fallback(); } });
     } else if(video.canPlayType("application/vnd.apple.mpegurl")){
+      qWrap.hidden=true;
       video.src=HLS_URL;
       video.addEventListener("loadedmetadata", function(){ setStatus(""); video.play().catch(function(){}); showHint(); }, {once:true});
       video.addEventListener("error", function(){ fallback(); }, {once:true});
