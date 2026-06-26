@@ -95,11 +95,11 @@
   .hint svg{width:15px; height:15px; fill:var(--accent);}
   @keyframes hintFade{0%{opacity:0; transform:translateX(-50%) translateY(8px);}12%,72%{opacity:1; transform:translateX(-50%) translateY(0);}100%{opacity:0; transform:translateX(-50%) translateY(8px); visibility:hidden;}}
 
-  /* Glass control buttons (overlay, top-left) */
-  .controls{position:absolute; top:14px; left:14px; z-index:6; display:flex; gap:8px;
-    opacity:0; transform:translateY(-4px); transition:opacity .25s ease, transform .25s ease; pointer-events:none;}
+  /* Glass control buttons (overlay, bottom-left) */
+  .controls{position:absolute; left:14px; bottom:14px; z-index:6; display:flex; gap:8px;
+    opacity:0; transform:translateY(4px); transition:opacity .25s ease, transform .25s ease; pointer-events:none;}
   .screen:hover .controls{opacity:1; transform:none; pointer-events:auto;}
-  .ctl-btn{display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:11px;
+  .ctl-btn{display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; border-radius:12px;
     background:rgba(8,11,14,.6); backdrop-filter:blur(14px) saturate(150%); -webkit-backdrop-filter:blur(14px) saturate(150%);
     border:1px solid rgba(255,255,255,.14); color:#f2f4f7; cursor:pointer;
     transition:border-color .2s, background .2s, transform .15s;}
@@ -159,11 +159,17 @@
     <div class="screen" id="screen">
       <div class="status" id="status"></div>
       <div class="controls" id="controls">
+        <button class="ctl-btn" id="playBtn" type="button" title="暂停">
+          <svg id="playIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" fill="currentColor" stroke="none"></rect><rect x="14" y="4" width="4" height="16" fill="currentColor" stroke="none"></rect></svg>
+        </button>
         <button class="ctl-btn" id="muteBtn" type="button" title="点击取消静音">
           <svg id="muteIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
         </button>
         <button class="ctl-btn" id="pipBtn" type="button" title="画中画">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8"></path><path d="M3 12v6a2 2 0 0 0 2 2h6"></path><rect x="12" y="13" width="9" height="7" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
+        </button>
+        <button class="ctl-btn" id="fsBtn" type="button" title="全屏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>
         </button>
       </div>
       <div class="pip-bar" id="pipBar">
@@ -183,7 +189,7 @@
         <div class="q-menu" id="qMenu" hidden></div>
       </div>
       <div class="hint" id="hint"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
-      <video id="video" playsinline controls style="display:none"></video>
+      <video id="video" playsinline style="display:none"></video>
       <iframe id="frame" src="" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen style="display:none"></iframe>
     </div>
     <div class="stage-empty" id="stageEmpty">
@@ -215,9 +221,6 @@
   function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; if(controlsEl) controlsEl.style.display="none"; if(screenEl.classList.contains("pip")) setPip(false); }
 
   // ---- Captions: pure native bottom rendering (identical to the original project) ----
-  // CEA-608 captions are muxed into the stream, so they advance with the video; reducing live
-  // latency makes BOTH catch up. We only reset each cue ONCE to auto so the browser stacks them
-  // natively at the bottom — smooth, no per-frame reflow.
   function normalizeCaptions(track){
     var cues = track.cues;
     if(!cues) return;
@@ -281,7 +284,18 @@
   qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
   document.addEventListener("click", function(){ closeQMenu(); });
 
-  // ---- Mute toggle (glass control button) ----
+  // ---- Play / Pause (glass) ----
+  var playBtn = document.getElementById("playBtn");
+  var playIcon = document.getElementById("playIcon");
+  var SVG_PLAY = '<polygon points="6 4 20 12 6 20 6 4" fill="currentColor" stroke="none"></polygon>';
+  var SVG_PAUSE = '<rect x="6" y="4" width="4" height="16" fill="currentColor" stroke="none"></rect><rect x="14" y="4" width="4" height="16" fill="currentColor" stroke="none"></rect>';
+  function updatePlayIcon(){ if(!playIcon) return; playIcon.innerHTML = video.paused ? SVG_PLAY : SVG_PAUSE; if(playBtn) playBtn.title = video.paused ? "播放" : "暂停"; }
+  if(playBtn){ playBtn.addEventListener("click", function(e){ e.stopPropagation(); if(video.paused){ video.play().catch(function(){}); } else { video.pause(); } }); }
+  video.addEventListener("play", updatePlayIcon);
+  video.addEventListener("pause", updatePlayIcon);
+  updatePlayIcon();
+
+  // ---- Mute toggle (glass) ----
   var muteBtn = document.getElementById("muteBtn");
   var muteIcon = document.getElementById("muteIcon");
   var SVG_MUTED = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>';
@@ -291,6 +305,13 @@
   if(muteBtn){ muteBtn.addEventListener("click", function(e){ e.stopPropagation(); setMuted(!video.muted); }); }
   video.addEventListener("volumechange", updateMuteIcon);
   updateMuteIcon();
+
+  // ---- Fullscreen (glass) ----
+  var fsBtn = document.getElementById("fsBtn");
+  if(fsBtn){ fsBtn.addEventListener("click", function(e){ e.stopPropagation();
+    if(document.fullscreenElement){ if(document.exitFullscreen) document.exitFullscreen(); }
+    else if(screenEl.requestFullscreen){ screenEl.requestFullscreen().catch(function(){}); }
+  }); }
 
   // ---- In-page picture-in-picture (glass, rounded floating window) ----
   var pipBtn = document.getElementById("pipBtn");
@@ -340,7 +361,6 @@
     var fellBack=false;
     function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
-      // 比原项目更贴近直播边缘：低延迟 + Worker，更小的同步距离；落后太多时一次性跳回边缘（不追帧/不加速，保持顺滑）
       hls=new window.Hls({ enableWorker:true, lowLatencyMode:true,
         liveSyncDurationCount:2, liveMaxLatencyDurationCount:6 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
