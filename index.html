@@ -82,53 +82,6 @@
   .q-item .hd{font-size:9px; font-weight:700; letter-spacing:.05em; padding:1px 5px; border-radius:4px;
     background:rgba(255,106,0,.16); color:var(--accent-2);}
 
-  /* Single picture-in-picture toggle (the only added control) */
-  .pip-toggle{position:absolute; top:14px; left:14px; z-index:6; display:inline-flex; align-items:center; justify-content:center;
-    width:38px; height:38px; border-radius:11px;
-    background:rgba(8,11,14,.6); backdrop-filter:blur(14px) saturate(150%); -webkit-backdrop-filter:blur(14px) saturate(150%);
-    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; cursor:pointer;
-    opacity:0; transform:translateY(-4px); transition:opacity .25s ease, transform .25s ease, background .2s, border-color .2s; pointer-events:none;}
-  .screen:hover .pip-toggle{opacity:1; transform:none; pointer-events:auto;}
-  .pip-toggle:hover{background:rgba(8,11,14,.82); border-color:rgba(255,255,255,.30);}
-  .pip-toggle svg{width:18px; height:18px;}
-
-  /* In-page rounded, glass, draggable, resizable floating PiP window */
-  .screen.pip{position:fixed; left:auto; top:auto; right:24px; bottom:24px;
-    width:384px; height:216px; flex:none; z-index:1000; cursor:default;
-    border-radius:18px; box-shadow:0 28px 80px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.08);
-    animation:pipIn .32s cubic-bezier(.2,.8,.2,1) both;}
-  .screen.pip::before{border-radius:18px; box-shadow:inset 0 0 0 1px rgba(255,255,255,.10), inset 0 1px 0 rgba(255,255,255,.12);}
-  .screen.pip .quality{display:none;}
-  @keyframes pipIn{from{opacity:0; transform:translateY(14px) scale(.95);}to{opacity:1; transform:none;}}
-
-  .pip-bar{display:none;}
-  .screen.pip .pip-bar{position:absolute; top:0; left:0; right:0; z-index:8; display:flex; align-items:center; gap:9px;
-    padding:8px 10px; cursor:move; border-radius:18px 18px 0 0;
-    background:linear-gradient(180deg,rgba(8,11,14,.82),rgba(8,11,14,.04));
-    backdrop-filter:blur(16px) saturate(150%); -webkit-backdrop-filter:blur(16px) saturate(150%);
-    border-bottom:1px solid rgba(255,255,255,.08); opacity:0; transition:opacity .2s ease;}
-  .screen.pip:hover .pip-bar{opacity:1;}
-  .pip-title{display:inline-flex; align-items:center; gap:7px; font-size:11px; font-weight:700; letter-spacing:.1em; color:#dfe5ea; user-select:none;}
-  .pip-dot{width:7px; height:7px; border-radius:50%; background:var(--live); animation:pulse 1.8s infinite;}
-  .pip-x{margin-left:auto; display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:7px;
-    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.14); color:#e6eaef; cursor:pointer;}
-  .pip-x:hover{background:rgba(255,255,255,.16); border-color:rgba(255,255,255,.28);}
-  .pip-x svg{width:13px; height:13px;}
-
-  .pip-resize{display:none;}
-  .screen.pip .pip-resize{display:block; position:absolute; right:0; bottom:0; width:24px; height:24px; z-index:9; cursor:nwse-resize;}
-  .screen.pip .pip-resize::after{content:""; position:absolute; right:5px; bottom:5px; width:9px; height:9px;
-    border-right:2px solid rgba(255,255,255,.55); border-bottom:2px solid rgba(255,255,255,.55);}
-
-  .stage-empty{display:none; flex:1 1 auto; flex-direction:column; align-items:center; justify-content:center; gap:16px;
-    border-radius:var(--radius); border:1px dashed rgba(255,255,255,.10); background:rgba(255,255,255,.015);
-    color:var(--muted); font-size:14px; font-weight:500;}
-  body.pip-active .stage-empty{display:flex;}
-  .stage-empty button{padding:9px 18px; border-radius:10px; background:rgba(255,255,255,.06);
-    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; font-family:'Inter',sans-serif; font-size:13px; font-weight:600;
-    cursor:pointer; transition:background .18s,border-color .18s;}
-  .stage-empty button:hover{background:rgba(255,255,255,.12); border-color:rgba(255,255,255,.28);}
-
   .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
     font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
     display:flex; flex-direction:column; align-items:center; gap:14px;}
@@ -144,7 +97,6 @@
   @media(max-width:680px){
     header{padding:14px 16px; gap:12px;} .stage{padding:14px 16px 18px;}
     .brand h1{font-size:22px;}
-    .screen.pip{right:12px; bottom:12px;}
   }
 </style>
 </head>
@@ -156,16 +108,6 @@
   <div class="stage">
     <div class="screen" id="screen">
       <div class="status" id="status"></div>
-      <button class="pip-toggle" id="pipBtn" type="button" title="画中画">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8"></path><path d="M3 12v6a2 2 0 0 0 2 2h6"></path><rect x="12" y="13" width="9" height="7" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
-      </button>
-      <div class="pip-bar" id="pipBar">
-        <span class="pip-title"><span class="pip-dot"></span>BLOOMBERG · LIVE</span>
-        <button class="pip-x" id="pipX" type="button" title="退出画中画">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-      </div>
-      <div class="pip-resize" id="pipResize"></div>
       <div class="quality" id="quality" hidden>
         <button class="q-btn" id="qBtn" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
@@ -175,12 +117,8 @@
         <div class="q-menu" id="qMenu" hidden></div>
       </div>
       <div class="hint" id="hint"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
-      <video id="video" playsinline controls disablepictureinpicture style="display:none"></video>
+      <video id="video" playsinline controls style="display:none"></video>
       <iframe id="frame" src="" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen style="display:none"></iframe>
-    </div>
-    <div class="stage-empty" id="stageEmpty">
-      <span>画中画播放中 — 拖顶栏移动，拖右下角调大小</span>
-      <button type="button" id="stageReturn">返回主画面</button>
     </div>
   </div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
@@ -203,9 +141,12 @@
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
   function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
   function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
-  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; if(screenEl.classList.contains("pip")) setPip(false); }
+  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; }
 
   // ---- Captions: pure native bottom rendering (identical to the original project) ----
+  // CEA-608 captions are muxed into the stream, so they advance with the video; reducing live
+  // latency makes BOTH catch up. We only reset each cue ONCE to auto so the browser stacks them
+  // natively at the bottom — smooth, no per-frame reflow.
   function normalizeCaptions(track){
     var cues = track.cues;
     if(!cues) return;
@@ -269,62 +210,6 @@
   qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
   document.addEventListener("click", function(){ closeQMenu(); });
 
-  // ---- Rounded glass in-page PiP: draggable + resizable ----
-  var pipBtn = document.getElementById("pipBtn");
-  var pipX = document.getElementById("pipX");
-  var pipBar = document.getElementById("pipBar");
-  var pipResize = document.getElementById("pipResize");
-  var stageReturn = document.getElementById("stageReturn");
-  function setPip(on){
-    if(on && video.style.display==="none") return;
-    screenEl.classList.toggle("pip", on);
-    document.body.classList.toggle("pip-active", on);
-    if(!on){ screenEl.style.left=""; screenEl.style.top=""; screenEl.style.right=""; screenEl.style.bottom=""; screenEl.style.width=""; screenEl.style.height=""; }
-  }
-  function anchorTopLeft(){ var r=screenEl.getBoundingClientRect(); screenEl.style.right="auto"; screenEl.style.bottom="auto"; screenEl.style.left=r.left+"px"; screenEl.style.top=r.top+"px"; return r; }
-  if(pipBtn){ pipBtn.addEventListener("click", function(e){ e.stopPropagation(); setPip(!screenEl.classList.contains("pip")); }); }
-  if(pipX){ pipX.addEventListener("click", function(e){ e.stopPropagation(); setPip(false); }); }
-  if(stageReturn){ stageReturn.addEventListener("click", function(e){ e.stopPropagation(); setPip(false); }); }
-  document.addEventListener("keydown", function(e){ if(e.key==="Escape" && screenEl.classList.contains("pip")) setPip(false); });
-
-  (function(){
-    if(!pipBar) return;
-    var dragging=false, sx=0, sy=0, ox=0, oy=0;
-    pipBar.addEventListener("pointerdown", function(e){
-      if(!screenEl.classList.contains("pip") || e.target.closest(".pip-x")) return;
-      dragging=true; var r=anchorTopLeft(); ox=r.left; oy=r.top; sx=e.clientX; sy=e.clientY;
-      try{ pipBar.setPointerCapture(e.pointerId); }catch(_){}
-    });
-    pipBar.addEventListener("pointermove", function(e){
-      if(!dragging) return;
-      var r=screenEl.getBoundingClientRect();
-      var nx=ox+(e.clientX-sx), ny=oy+(e.clientY-sy);
-      nx=Math.max(8, Math.min(window.innerWidth-r.width-8, nx));
-      ny=Math.max(8, Math.min(window.innerHeight-r.height-8, ny));
-      screenEl.style.left=nx+"px"; screenEl.style.top=ny+"px";
-    });
-    pipBar.addEventListener("pointerup", function(e){ dragging=false; try{ pipBar.releasePointerCapture(e.pointerId); }catch(_){}});
-  })();
-
-  (function(){
-    if(!pipResize) return;
-    var resizing=false, sx=0, startW=0, startLeft=0;
-    pipResize.addEventListener("pointerdown", function(e){
-      if(!screenEl.classList.contains("pip")) return;
-      e.stopPropagation(); resizing=true;
-      var r=anchorTopLeft(); startW=r.width; startLeft=r.left; sx=e.clientX;
-      try{ pipResize.setPointerCapture(e.pointerId); }catch(_){}
-    });
-    pipResize.addEventListener("pointermove", function(e){
-      if(!resizing) return;
-      var w=startW+(e.clientX-sx);
-      var maxW=Math.min(window.innerWidth*0.85, window.innerWidth-startLeft-8);
-      w=Math.max(240, Math.min(maxW, w));
-      screenEl.style.width=w+"px"; screenEl.style.height=(w*9/16)+"px";
-    });
-    pipResize.addEventListener("pointerup", function(e){ resizing=false; try{ pipResize.releasePointerCapture(e.pointerId); }catch(_){}});
-  })();
-
   function playYouTube(){
     showFrame(); setStatus("");
     frame.src="https://www.youtube.com/embed/live_stream?channel="+YT_CHANNEL+"&autoplay=1&mute=1";
@@ -336,6 +221,7 @@
     var fellBack=false;
     function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
+      // 比原项目更贴近直播边缘：低延迟 + Worker，更小的同步距离；落后太多时一次性跳回边缘（不追帧/不加速，保持顺滑）
       hls=new window.Hls({ enableWorker:true, lowLatencyMode:true,
         liveSyncDurationCount:2, liveMaxLatencyDurationCount:6 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
@@ -353,8 +239,7 @@
     } else { fallback(); }
   }
 
-  screenEl.addEventListener("click", function(e){
-    if(e.target.closest(".pip-toggle") || e.target.closest(".pip-bar") || e.target.closest(".pip-resize") || e.target.closest(".quality")) return;
+  screenEl.addEventListener("click", function(){
     if(video.style.display!=="none" && video.muted){ video.muted=false; video.play().catch(function(){}); hintEl.classList.remove("show"); }
   });
 
