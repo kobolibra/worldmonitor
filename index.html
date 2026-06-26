@@ -94,9 +94,59 @@
   .hint.show{display:flex; animation:hintFade 5.5s ease forwards;}
   .hint svg{width:15px; height:15px; fill:var(--accent);}
   @keyframes hintFade{0%{opacity:0; transform:translateX(-50%) translateY(8px);}12%,72%{opacity:1; transform:translateX(-50%) translateY(0);}100%{opacity:0; transform:translateX(-50%) translateY(8px); visibility:hidden;}}
+
+  /* Glass control buttons (overlay, top-left) */
+  .controls{position:absolute; top:14px; left:14px; z-index:6; display:flex; gap:8px;
+    opacity:0; transform:translateY(-4px); transition:opacity .25s ease, transform .25s ease; pointer-events:none;}
+  .screen:hover .controls{opacity:1; transform:none; pointer-events:auto;}
+  .ctl-btn{display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:11px;
+    background:rgba(8,11,14,.6); backdrop-filter:blur(14px) saturate(150%); -webkit-backdrop-filter:blur(14px) saturate(150%);
+    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; cursor:pointer;
+    transition:border-color .2s, background .2s, transform .15s;}
+  .ctl-btn:hover{background:rgba(8,11,14,.82); border-color:rgba(255,255,255,.30); transform:translateY(-1px);}
+  .ctl-btn:active{transform:translateY(0);}
+  .ctl-btn svg{width:18px; height:18px;}
+
+  /* In-page picture-in-picture: floating glass rounded window */
+  .screen.pip{position:fixed; left:auto; top:auto; right:24px; bottom:24px;
+    width:384px; max-width:48vw; height:auto; aspect-ratio:16/9; flex:none; z-index:1000; cursor:default;
+    border-radius:18px;
+    box-shadow:0 28px 80px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.08);
+    animation:pipIn .32s cubic-bezier(.2,.8,.2,1) both;}
+  .screen.pip::before{border-radius:18px; box-shadow:inset 0 0 0 1px rgba(255,255,255,.10), inset 0 1px 0 rgba(255,255,255,.12);}
+  .screen.pip .quality{display:none;}
+  @keyframes pipIn{from{opacity:0; transform:translateY(14px) scale(.95);}to{opacity:1; transform:none;}}
+  .pip-bar{display:none;}
+  .screen.pip .pip-bar{position:absolute; top:0; left:0; right:0; z-index:8; display:flex; align-items:center; gap:9px;
+    padding:8px 10px; cursor:move; border-radius:18px 18px 0 0;
+    background:linear-gradient(180deg,rgba(8,11,14,.80),rgba(8,11,14,.10));
+    backdrop-filter:blur(16px) saturate(150%); -webkit-backdrop-filter:blur(16px) saturate(150%);
+    border-bottom:1px solid rgba(255,255,255,.08);
+    opacity:0; transition:opacity .2s ease;}
+  .screen.pip:hover .pip-bar{opacity:1;}
+  .pip-title{display:inline-flex; align-items:center; gap:7px; font-size:11px; font-weight:700; letter-spacing:.1em; color:#dfe5ea;}
+  .pip-dot{width:7px; height:7px; border-radius:50%; background:var(--live); animation:pulse 1.8s infinite;}
+  .pip-actions{margin-left:auto; display:flex; gap:6px;}
+  .pip-btn{display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:8px;
+    background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); color:#e6eaef; cursor:pointer;
+    transition:background .18s, border-color .18s;}
+  .pip-btn:hover{background:rgba(255,255,255,.16); border-color:rgba(255,255,255,.28);}
+  .pip-btn svg{width:14px; height:14px;}
+
+  /* Empty stage note while in picture-in-picture */
+  .stage-empty{display:none; flex:1 1 auto; flex-direction:column; align-items:center; justify-content:center; gap:16px;
+    border-radius:var(--radius); border:1px dashed rgba(255,255,255,.10); background:rgba(255,255,255,.015);
+    color:var(--muted); font-size:14px; font-weight:500;}
+  body.pip-active .stage-empty{display:flex;}
+  .stage-empty button{padding:9px 18px; border-radius:10px; background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; font-family:'Inter',sans-serif; font-size:13px; font-weight:600;
+    cursor:pointer; transition:background .18s,border-color .18s;}
+  .stage-empty button:hover{background:rgba(255,255,255,.12); border-color:rgba(255,255,255,.28);}
+
   @media(max-width:680px){
     header{padding:14px 16px; gap:12px;} .stage{padding:14px 16px 18px;}
     .brand h1{font-size:22px;}
+    .screen.pip{width:auto; left:12px; right:12px; bottom:12px; max-width:none;}
   }
 </style>
 </head>
@@ -108,6 +158,22 @@
   <div class="stage">
     <div class="screen" id="screen">
       <div class="status" id="status"></div>
+      <div class="controls" id="controls">
+        <button class="ctl-btn" id="muteBtn" type="button" title="点击取消静音">
+          <svg id="muteIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+        </button>
+        <button class="ctl-btn" id="pipBtn" type="button" title="画中画">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8"></path><path d="M3 12v6a2 2 0 0 0 2 2h6"></path><rect x="12" y="13" width="9" height="7" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
+        </button>
+      </div>
+      <div class="pip-bar" id="pipBar">
+        <span class="pip-title"><span class="pip-dot"></span>BLOOMBERG · LIVE</span>
+        <div class="pip-actions">
+          <button class="pip-btn" id="pipExit" type="button" title="退出画中画">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M9 21H3v-6"></path><path d="M21 3l-7 7"></path><path d="M3 21l7-7"></path></svg>
+          </button>
+        </div>
+      </div>
       <div class="quality" id="quality" hidden>
         <button class="q-btn" id="qBtn" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
@@ -120,6 +186,10 @@
       <video id="video" playsinline controls style="display:none"></video>
       <iframe id="frame" src="" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen style="display:none"></iframe>
     </div>
+    <div class="stage-empty" id="stageEmpty">
+      <span>画中画播放中 — 视频正在右下角悬浮窗播放</span>
+      <button type="button" id="stageReturn">返回主画面</button>
+    </div>
   </div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
@@ -131,6 +201,7 @@
   var statusEl = document.getElementById("status");
   var hintEl = document.getElementById("hint");
   var screenEl = document.getElementById("screen");
+  var controlsEl = document.getElementById("controls");
   var qWrap = document.getElementById("quality");
   var qBtn = document.getElementById("qBtn");
   var qLabel = document.getElementById("qLabel");
@@ -140,8 +211,8 @@
   function setStatus(t){ statusEl.textContent = t || ""; }
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
   function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
-  function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
-  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; }
+  function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; if(controlsEl) controlsEl.style.display="flex"; }
+  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; if(controlsEl) controlsEl.style.display="none"; if(screenEl.classList.contains("pip")) setPip(false); }
 
   // ---- Captions: pure native bottom rendering (identical to the original project) ----
   // CEA-608 captions are muxed into the stream, so they advance with the video; reducing live
@@ -210,6 +281,54 @@
   qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
   document.addEventListener("click", function(){ closeQMenu(); });
 
+  // ---- Mute toggle (glass control button) ----
+  var muteBtn = document.getElementById("muteBtn");
+  var muteIcon = document.getElementById("muteIcon");
+  var SVG_MUTED = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>';
+  var SVG_SOUND = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"></polygon><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.8 5.5a9 9 0 0 1 0 13"></path>';
+  function updateMuteIcon(){ if(!muteIcon) return; muteIcon.innerHTML = video.muted ? SVG_MUTED : SVG_SOUND; if(muteBtn) muteBtn.title = video.muted ? "点击取消静音" : "点击静音"; }
+  function setMuted(m){ video.muted = m; if(!m){ video.play().catch(function(){}); hintEl.classList.remove("show"); } }
+  if(muteBtn){ muteBtn.addEventListener("click", function(e){ e.stopPropagation(); setMuted(!video.muted); }); }
+  video.addEventListener("volumechange", updateMuteIcon);
+  updateMuteIcon();
+
+  // ---- In-page picture-in-picture (glass, rounded floating window) ----
+  var pipBtn = document.getElementById("pipBtn");
+  var pipExit = document.getElementById("pipExit");
+  var pipBar = document.getElementById("pipBar");
+  var stageReturn = document.getElementById("stageReturn");
+  function setPip(on){
+    if(on && video.style.display==="none") return;
+    screenEl.classList.toggle("pip", on);
+    document.body.classList.toggle("pip-active", on);
+    if(!on){ screenEl.style.left=""; screenEl.style.top=""; screenEl.style.right=""; screenEl.style.bottom=""; }
+  }
+  if(pipBtn){ pipBtn.addEventListener("click", function(e){ e.stopPropagation(); setPip(!screenEl.classList.contains("pip")); }); }
+  if(pipExit){ pipExit.addEventListener("click", function(e){ e.stopPropagation(); setPip(false); }); }
+  if(stageReturn){ stageReturn.addEventListener("click", function(e){ e.stopPropagation(); setPip(false); }); }
+  document.addEventListener("keydown", function(e){ if(e.key==="Escape" && screenEl.classList.contains("pip")) setPip(false); });
+  (function(){
+    if(!pipBar) return;
+    var dragging=false, sx=0, sy=0, ox=0, oy=0;
+    pipBar.addEventListener("pointerdown", function(e){
+      if(!screenEl.classList.contains("pip")) return;
+      dragging=true; var r=screenEl.getBoundingClientRect();
+      ox=r.left; oy=r.top; sx=e.clientX; sy=e.clientY;
+      screenEl.style.right="auto"; screenEl.style.bottom="auto";
+      screenEl.style.left=ox+"px"; screenEl.style.top=oy+"px";
+      try{ pipBar.setPointerCapture(e.pointerId); }catch(_){}
+    });
+    pipBar.addEventListener("pointermove", function(e){
+      if(!dragging) return;
+      var r=screenEl.getBoundingClientRect();
+      var nx=ox+(e.clientX-sx), ny=oy+(e.clientY-sy);
+      nx=Math.max(8, Math.min(window.innerWidth-r.width-8, nx));
+      ny=Math.max(8, Math.min(window.innerHeight-r.height-8, ny));
+      screenEl.style.left=nx+"px"; screenEl.style.top=ny+"px";
+    });
+    pipBar.addEventListener("pointerup", function(e){ dragging=false; try{ pipBar.releasePointerCapture(e.pointerId); }catch(_){}});
+  })();
+
   function playYouTube(){
     showFrame(); setStatus("");
     frame.src="https://www.youtube.com/embed/live_stream?channel="+YT_CHANNEL+"&autoplay=1&mute=1";
@@ -217,7 +336,7 @@
 
   function playHls(){
     showVideo(); setStatus("正在连接 Bloomberg 官方直播…");
-    destroyHls(); video.muted=true;
+    destroyHls(); video.muted=true; updateMuteIcon();
     var fellBack=false;
     function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
@@ -239,7 +358,8 @@
     } else { fallback(); }
   }
 
-  screenEl.addEventListener("click", function(){
+  screenEl.addEventListener("click", function(e){
+    if(e.target.closest(".controls") || e.target.closest(".pip-bar") || e.target.closest(".quality")) return;
     if(video.style.display!=="none" && video.muted){ video.muted=false; video.play().catch(function(){}); hintEl.classList.remove("show"); }
   });
 
