@@ -55,7 +55,6 @@
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
   .screen video{position:relative; z-index:1; width:100%; height:100%;
     object-fit:contain; background:#000;}
-  .screen iframe{position:absolute; inset:0; width:100%; height:100%; border:0; background:#000;}
   .screen video::cue{ background:rgba(0,0,0,.7); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:0.72em; line-height:1.35; text-shadow:0 1px 2px rgba(0,0,0,.6); }
 
   /* Quality selector */
@@ -118,16 +117,13 @@
       </div>
       <div class="hint" id="hint"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
       <video id="video" playsinline controls style="display:none"></video>
-      <iframe id="frame" src="" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen style="display:none"></iframe>
     </div>
   </div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
-  var YT_CHANNEL = "UCIALMKvObZNtJ6AmdCLP7Lg";
 
   var video = document.getElementById("video");
-  var frame = document.getElementById("frame");
   var statusEl = document.getElementById("status");
   var hintEl = document.getElementById("hint");
   var screenEl = document.getElementById("screen");
@@ -136,17 +132,22 @@
   var qLabel = document.getElementById("qLabel");
   var qMenu = document.getElementById("qMenu");
   var hls = null;
+  var retryTimer = null;
+  var retryCount = 0;
 
   function setStatus(t){ statusEl.textContent = t || ""; }
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
   function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
-  function showVideo(){ video.style.display="block"; frame.style.display="none"; frame.src=""; }
-  function showFrame(){ frame.style.display="block"; video.style.display="none"; destroyHls(); video.removeAttribute("src"); hintEl.classList.remove("show"); qWrap.hidden=true; }
+
+  // 只用 Bloomberg HLS：连不上时显示重连提示并每 5 秒自动重试（不再回退到 YouTube）
+  function scheduleRetry(){
+    retryCount++;
+    setStatus("直播连接失败，正在重试（第 " + retryCount + " 次）…");
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(playHls, 5000);
+  }
 
   // ---- Captions: pure native bottom rendering (identical to the original project) ----
-  // CEA-608 captions are muxed into the stream, so they advance with the video; reducing live
-  // latency makes BOTH catch up. We only reset each cue ONCE to auto so the browser stacks them
-  // natively at the bottom — smooth, no per-frame reflow.
   function normalizeCaptions(track){
     var cues = track.cues;
     if(!cues) return;
@@ -210,33 +211,29 @@
   qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
   document.addEventListener("click", function(){ closeQMenu(); });
 
-  function playYouTube(){
-    showFrame(); setStatus("");
-    frame.src="https://www.youtube.com/embed/live_stream?channel="+YT_CHANNEL+"&autoplay=1&mute=1";
-  }
-
   function playHls(){
-    showVideo(); setStatus("正在连接 Bloomberg 官方直播…");
+    clearTimeout(retryTimer);
+    video.style.display="block";
+    if(retryCount===0) setStatus("正在连接 Bloomberg 官方直播…");
     destroyHls(); video.muted=true;
-    var fellBack=false;
-    function fallback(){ if(fellBack) return; fellBack=true; playYouTube(); }
     if(window.Hls && window.Hls.isSupported()){
-      // 比原项目更贴近直播边缘：低延迟 + Worker，更小的同步距离；落后太多时一次性跳回边缘（不追帧/不加速，保持顺滑）
       hls=new window.Hls({ enableWorker:true, lowLatencyMode:true,
         liveSyncDurationCount:2, liveMaxLatencyDurationCount:6 });
       hls.loadSource(HLS_URL); hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
-        setStatus(""); buildQualityMenu();
+        retryCount=0; setStatus(""); buildQualityMenu();
         video.play().catch(function(){}); showHint();
       });
       hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){ updateAutoLabel(); });
-      hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); fallback(); } });
+      hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); scheduleRetry(); } });
     } else if(video.canPlayType("application/vnd.apple.mpegurl")){
       qWrap.hidden=true;
       video.src=HLS_URL;
-      video.addEventListener("loadedmetadata", function(){ setStatus(""); video.play().catch(function(){}); showHint(); }, {once:true});
-      video.addEventListener("error", function(){ fallback(); }, {once:true});
-    } else { fallback(); }
+      video.addEventListener("loadedmetadata", function(){ retryCount=0; setStatus(""); video.play().catch(function(){}); showHint(); }, {once:true});
+      video.addEventListener("error", function(){ scheduleRetry(); }, {once:true});
+    } else {
+      setStatus("当前浏览器不支持该直播流");
+    }
   }
 
   screenEl.addEventListener("click", function(){
