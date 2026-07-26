@@ -127,6 +127,25 @@ function resolveAuditWorkspace({ workspace, packageJson, lockfile }) {
   };
 }
 
+// npm can report an error with an empty summary, and a thrown Error with an empty
+// message exits 1 while printing nothing at all. Never let a description be empty.
+function describeAuditError(reportError) {
+  if (typeof reportError === 'string' && reportError.trim()) return reportError.trim();
+  if (reportError && typeof reportError === 'object') {
+    const summary = typeof reportError.summary === 'string' ? reportError.summary.trim() : '';
+    const detail = typeof reportError.detail === 'string' ? reportError.detail.trim() : '';
+    const code = typeof reportError.code === 'string' ? reportError.code.trim() : '';
+    const described = [code, summary || detail].filter(Boolean).join(': ');
+    if (described) return described;
+    try {
+      return JSON.stringify(reportError);
+    } catch {
+      // fall through to the generic description below
+    }
+  }
+  return 'npm audit reported an error with no description';
+}
+
 function readAuditReport({ workspace, packageJson, lockfile }) {
   const auditWorkspace = resolveAuditWorkspace({ workspace, packageJson, lockfile });
   const result = spawnSync('npm', ['audit', '--omit=dev', '--json'], {
@@ -135,23 +154,34 @@ function readAuditReport({ workspace, packageJson, lockfile }) {
   });
 
   try {
-    const json = result.stdout.trim();
+    if (result.error) {
+      throw new Error(`Could not run npm audit for ${workspace}: ${result.error.message}`);
+    }
+
+    const status = result.status === null ? `signal ${result.signal}` : `exit ${result.status}`;
+    const stderr = (result.stderr ?? '').trim();
+
+    // Always surface npm's own diagnostics. The root .npmrc sets loglevel=error, so
+    // anything npm prints here is worth reading.
+    if (stderr) {
+      process.stderr.write(`npm audit stderr for ${workspace} (${status}):\n${stderr}\n`);
+    }
+
+    const json = (result.stdout ?? '').trim();
 
     if (!json) {
-      process.stderr.write(result.stderr);
-      throw new Error(`npm audit did not return JSON for ${workspace}`);
+      throw new Error(`npm audit returned no JSON for ${workspace} (${status})`);
     }
 
     let report;
     try {
       report = JSON.parse(json);
     } catch (error) {
-      process.stderr.write(result.stderr);
-      throw new Error(`Could not parse npm audit JSON for ${workspace}: ${error.message}`);
+      throw new Error(`Could not parse npm audit JSON for ${workspace} (${status}): ${error.message}`);
     }
 
     if (report.error) {
-      throw new Error(report.error.summary ?? report.error.detail ?? `npm audit failed for ${workspace}`);
+      throw new Error(`npm audit failed for ${workspace} (${status}): ${describeAuditError(report.error)}`);
     }
 
     return report;
@@ -170,6 +200,7 @@ function main() {
   const workspace = resolve(process.cwd(), args.workspace);
   const packageJson = resolve(process.cwd(), args.packageJson);
   const lockfile = resolve(process.cwd(), args.lockfile);
+  console.log(`Auditing ${args.lockfile} (workspace ${args.workspace}, level ${args.auditLevel}+)`);
   const report = readAuditReport({ workspace, packageJson, lockfile });
   const allFindings = collectAuditFindings(report, args.auditLevel);
   const unbaselined = collectUnbaselinedFindings(report, args.lockfile, args.auditLevel);
@@ -215,7 +246,12 @@ if (isInvokedAsScript(process.argv[1], import.meta.url)) {
   try {
     main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    const raw = error instanceof Error ? error.stack || error.message : String(error);
+    const message = String(raw ?? '').trim() || 'Production audit failed with no error message';
+    // console.error alone produces no annotation, so a crash here was invisible in the
+    // run summary. Emit a workflow error command as well.
+    console.log(`::error title=Production audit script failed::${message.replace(/\r?\n/g, ' ')}`);
+    console.error(message);
     process.exitCode = 1;
   }
 }
