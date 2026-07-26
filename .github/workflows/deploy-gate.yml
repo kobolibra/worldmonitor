@@ -58,11 +58,30 @@ jobs:
           pending=$(echo "$status" | awk -F= '/^pending=/ { print $2 }')
           failed=$(echo "$status" | awk -F= '/^failed=/ { print $2 }')
 
+          # The commit statuses API caps `description` at 140 chars and rejects
+          # longer values with 422 "Description is too long". The full required-
+          # jobs list is ~119 chars, so "Waiting for required PR gates: <list>"
+          # reached 149 chars and took the whole gate job down with exit 1
+          # instead of publishing the status it had already computed. Cap the
+          # value here, and lead with a job count so a truncated message still
+          # tells the reader how many gates are outstanding.
+          describe() {
+            prefix="$1"
+            list="$2"
+            count=$(printf '%s' "$list" | awk -F, '{ print NF }')
+            text="$prefix ($count): $list"
+            if [ "${#text}" -le 140 ]; then
+              printf '%s' "$text"
+            else
+              printf '%s...' "${text:0:137}"
+            fi
+          }
+
           if [ -n "$pending" ]; then
             gh api "repos/$REPO/statuses/$SHA" --method POST \
               --field state="pending" \
               --field context="gate" \
-              --field description="Waiting for required PR gates: $pending"
+              --field description="$(describe 'Waiting for required PR gates' "$pending")"
             exit 0
           fi
 
@@ -71,7 +90,7 @@ jobs:
             gh api "repos/$REPO/statuses/$SHA" --method POST \
               --field state="failure" \
               --field context="gate" \
-              --field description="Required PR gates did not pass: $failed"
+              --field description="$(describe 'Required PR gates did not pass' "$failed")"
             exit 0
           fi
 
