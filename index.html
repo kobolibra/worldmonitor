@@ -280,9 +280,9 @@
     </div>
 
     <span class="sep-dot m-hide" aria-hidden="true"></span>
-    <span class="m-hide" id="statRate">—</span>
+    <span class="m-hide" id="statRate">码率 —</span>
     <span class="sep-dot" aria-hidden="true"></span>
-    <span id="statLat">—</span>
+    <span id="statLat">延迟 —</span>
     <span class="spacer"></span>
     <span class="keys">
       <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span>
@@ -331,7 +331,6 @@
   var hls = null;
   var retryTimer = null, countdownTimer = null;
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
-  var libLoading = false;
 
   function noop(){}
   function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
@@ -377,15 +376,27 @@
   function retryNow(){ clearTimeout(retryTimer); clearInterval(countdownTimer); playHls(); }
   retryBtn.addEventListener("click", retryNow);
 
-  /* ---------- Player library loader ---------- */
+  /* ---------- Player library loader ----------
+     Always attempt hls.js, even where the browser can play HLS natively:
+     the native path gives up the level list, the bitrate readout and
+     low-latency sync. Native is a fallback, not a shortcut. */
+  var libLoading = false, libWaiters = [];
   function loadLibrary(done){
     if(window.Hls) return done(true);
+    libWaiters.push(done);
     if(libLoading) return;
     libLoading = true;
+
     var i = 0;
+    function finish(ok){
+      libLoading = false;
+      var pending = libWaiters.slice();
+      libWaiters.length = 0;
+      pending.forEach(function(fn){ try{ fn(ok); }catch(e){} });
+    }
     (function next(){
-      if(window.Hls){ libLoading = false; return done(true); }
-      if(i >= HLS_SOURCES.length){ libLoading = false; return done(false); }
+      if(window.Hls) return finish(true);
+      if(i >= HLS_SOURCES.length) return finish(false);
       var el = document.createElement("script"), settled = false;
       var timer = setTimeout(function(){ fail(); }, SOURCE_TIMEOUT);
       function fail(){
@@ -399,7 +410,7 @@
       el.onload = function(){
         if(settled) return;
         settled = true; clearTimeout(timer);
-        if(window.Hls){ libLoading = false; done(true); } else { next(); }
+        if(window.Hls) finish(true); else next();
       };
       el.onerror = fail;
       document.head.appendChild(el);
@@ -446,6 +457,7 @@
     closeQMenu();
     qList.innerHTML = "";
     qBtn.disabled = true;
+    qBtn.title = "选择画质";
     qMode.textContent = "自动";
     qSrc.textContent = "自适应";
     qFoot.hidden = true;
@@ -554,11 +566,14 @@
   function playHls(){
     clearTimeout(retryTimer); clearInterval(countdownTimer);
 
-    if(!window.Hls && !nativeOk()){
+    if(!window.Hls){
       showLoading(retryCount === 0 ? "正在加载播放组件…" : "正在重新加载播放组件…");
       loadLibrary(function(ok){
-        if(ok) startPlayback();
-        else scheduleRetry("播放组件加载失败", "三个镜像源都没能加载 hls.js。通常是网络受限或被广告拦截插件阻断——换个网络环境或关闭拦截插件后重试。");
+        if(!ok && !nativeOk()){
+          scheduleRetry("播放组件加载失败", "三个镜像源都没能加载 hls.js。通常是网络受限或被广告拦截插件阻断——换个网络环境或关闭拦截插件后重试。");
+          return;
+        }
+        startPlayback();
       });
       return;
     }
@@ -593,8 +608,10 @@
       hls.on(window.Hls.Events.FRAG_BUFFERED, function(){ netRecovery = 0; mediaRecovery = 0; });
       hls.on(window.Hls.Events.ERROR, onHlsError);
     } else if(nativeOk()){
-      /* Safari plays HLS natively but exposes no level list, so the quality
-         control stays a readout only. */
+      /* Fallback only: the system decoder exposes no level list, so the control
+         becomes a readout and latency is whatever the OS player decides. */
+      qMode.textContent = "系统解码";
+      qBtn.title = "当前由系统直接解码 HLS，不提供可选清晰度列表";
       video.src = HLS_URL;
       video.addEventListener("loadedmetadata", function(){
         retryCount = 0; clearState(); video.play().catch(noop); showHint();
@@ -696,9 +713,9 @@
     try{
       qRes.textContent = video.videoWidth ? (video.videoWidth + "×" + video.videoHeight) : "—";
       var l = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
-      statRate.textContent = (l && l.bitrate) ? (Math.round(l.bitrate / 1000).toLocaleString() + " kbps") : "—";
+      statRate.textContent = "码率 " + ((l && l.bitrate) ? (Math.round(l.bitrate / 1000).toLocaleString() + " kbps") : "—");
       var lat = latency();
-      statLat.textContent = isFinite(lat) ? ("延迟 " + lat.toFixed(1) + "s") : "—";
+      statLat.textContent = "延迟 " + (isFinite(lat) ? (lat.toFixed(1) + "s") : "—");
       var behind = isFinite(lat) && lat > 12 && !video.paused;
       liveBtn.classList.toggle("behind", behind);
       liveTxt.textContent = behind ? "回到直播" : "LIVE";
