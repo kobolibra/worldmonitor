@@ -205,9 +205,11 @@
     border-radius:4px; border:1px solid var(--line-strong); background:rgba(255,255,255,.03); color:var(--muted);}
   #statLat.catching{color:var(--accent-2);}
 
-  /* ---------- Quality: promoted from the rail's own resolution readout ----------
-     One object shows the current picture and changes it. No floating overlay,
-     nothing covering the frame, nothing hidden behind :hover. */
+  /* ---------- Rail popovers ----------
+     Two controls share this component: the signal source and the picture
+     quality. Both are promoted from the readout they replace, so the thing
+     that tells you the state is also the thing that changes it. No floating
+     overlay, nothing covering the frame, nothing hidden behind :hover. */
   .qsel{position:relative; display:inline-flex;}
   .q-btn{display:inline-flex; align-items:center; gap:7px; padding:4px 9px; margin:-4px 0;
     border-radius:8px; border:1px solid transparent; background:transparent;
@@ -232,6 +234,7 @@
     box-shadow:0 26px 64px rgba(0,0,0,.68), inset 0 1px 0 rgba(255,255,255,.07);
     transform-origin:bottom left; animation:popIn .16s cubic-bezier(.2,.8,.2,1) both;}
   .q-pop[hidden]{display:none;}
+  #sMenu{width:276px;}
   @keyframes popIn{from{opacity:0; transform:translateY(7px) scale(.98);}to{opacity:1; transform:none;}}
   .q-head{display:flex; align-items:center; justify-content:space-between; gap:10px;
     padding:8px 10px 9px; font-size:9.5px; font-weight:700; letter-spacing:.2em; color:var(--faint);}
@@ -322,7 +325,20 @@
   </main>
 
   <footer class="rail">
-    <span>bloomberg.com · HLS</span>
+    <div class="qsel">
+      <button class="q-btn" id="sBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="sMenu" title="切换信号源（S）">
+        <span class="q-mode">信号源</span>
+        <span class="q-thin" aria-hidden="true"></span>
+        <span id="sName">US</span>
+        <svg class="q-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+      <div class="q-pop" id="sMenu" role="listbox" aria-label="信号源" hidden>
+        <div class="q-head"><b>信号源</b><span>BLOOMBERG</span></div>
+        <div class="q-list" id="sList"></div>
+        <div class="q-foot">各路信号的播出包装不同。经典 L 型版面（主画面居左上、下方滚动新闻、右侧滚动行情）烧录在画面里，通常只出现在区域频道；美国数字版多为纯净画面。</div>
+      </div>
+    </div>
+
     <span class="sep-dot" aria-hidden="true"></span>
 
     <div class="qsel">
@@ -345,7 +361,7 @@
     <span id="statLat" title="当前画面距离直播边缘的真实时间差">延迟 —</span>
     <span class="spacer"></span>
     <span class="keys">
-      <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span>
+      <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span><span><kbd>S</kbd>信号源</span>
     </span>
   </footer>
 </div>
@@ -356,7 +372,32 @@
 (function(){
   "use strict";
 
-  var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
+  /* ---------- Signal sources ----------
+     Bloomberg publishes several parallel live feeds. The newsroom is the same,
+     but the broadcast graphics package baked into the video differs: the
+     classic L-bar layout (main picture top-left, news crawl along the bottom,
+     quote rail down the right side) is part of the encoded picture, not an
+     overlay we could add or remove. Regional channels tend to carry it; the US
+     digital feed is usually delivered clean. Nothing in the manifest declares
+     this, so it cannot be detected — it has to be a choice, and it is
+     remembered so it only has to be made once. */
+  var SOURCES = [
+    {id:"us",      name:"US",      note:"美国 · 数字版",   url:"https://www.bloomberg.com/media-manifest/streams/us.m3u8"},
+    {id:"phoenix", name:"US ALT",  note:"美国 · 备用链路", url:"https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8"},
+    {id:"eu",      name:"EUROPE",  note:"欧洲频道",       url:"https://www.bloomberg.com/media-manifest/streams/eu.m3u8"},
+    {id:"asia",    name:"ASIA",    note:"亚洲频道",       url:"https://www.bloomberg.com/media-manifest/streams/asia.m3u8"},
+    {id:"aus",     name:"AU",      note:"澳洲频道",       url:"https://www.bloomberg.com/media-manifest/streams/aus.m3u8"}
+  ];
+  function sourceById(id){
+    for(var si = 0; si < SOURCES.length; si++) if(SOURCES[si].id === id) return SOURCES[si];
+    return SOURCES[0];
+  }
+  var currentSource = SOURCES[0];
+  try{
+    var saved = localStorage.getItem("bbg.source");
+    if(saved) currentSource = sourceById(saved);
+  }catch(e){}
+  function streamUrl(){ return currentSource.url; }
 
   var video    = document.getElementById("video");
   var screenEl = document.getElementById("screen");
@@ -369,6 +410,11 @@
   var liveTxt  = document.getElementById("liveTxt");
   var statRate = document.getElementById("statRate");
   var statLat  = document.getElementById("statLat");
+
+  var sBtn  = document.getElementById("sBtn");
+  var sName = document.getElementById("sName");
+  var sMenu = document.getElementById("sMenu");
+  var sList = document.getElementById("sList");
 
   var qBtn  = document.getElementById("qBtn");
   var qMode = document.getElementById("qMode");
@@ -448,6 +494,94 @@
     video.textTracks.addEventListener("addtrack", function(e){ bindCaptionTrack(e.track); });
   }
 
+  /* ---------- Shared popover behaviour ----------
+     Both rail controls are listboxes anchored to their own trigger, so the
+     open/close and roving-focus logic lives in one place rather than being
+     written twice and drifting apart. */
+  function closeMenu(btn, pop){
+    pop.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+  }
+  function closeAllMenus(){ closeMenu(qBtn, qMenu); closeMenu(sBtn, sMenu); }
+  function openMenu(btn, pop, list){
+    if(btn.disabled) return;
+    closeAllMenus();
+    pop.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    var sel = list.querySelector('.q-item[aria-selected="true"]') || list.querySelector(".q-item");
+    if(sel) sel.focus();
+  }
+  function wireMenu(btn, pop, list){
+    btn.addEventListener("click", function(e){
+      e.stopPropagation();
+      if(pop.hidden) openMenu(btn, pop, list); else closeMenu(btn, pop);
+    });
+    pop.addEventListener("click", function(e){ e.stopPropagation(); });
+    pop.addEventListener("keydown", function(e){
+      var items = [].slice.call(list.querySelectorAll(".q-item"));
+      if(!items.length) return;
+      var i = items.indexOf(document.activeElement), k = e.key;
+      if(k === "ArrowDown" || k === "ArrowUp"){
+        e.preventDefault();
+        var n = (i < 0) ? 0 : (i + (k === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[n].focus();
+      } else if(k === "Home"){ e.preventDefault(); items[0].focus(); }
+      else if(k === "End"){ e.preventDefault(); items[items.length - 1].focus(); }
+      else if(k === "Escape" || k === "Tab"){ e.preventDefault(); closeMenu(btn, pop); btn.focus(); }
+    });
+  }
+  wireMenu(sBtn, sMenu, sList);
+  wireMenu(qBtn, qMenu, qList);
+  document.addEventListener("click", closeAllMenus);
+  function closeQMenu(){ closeMenu(qBtn, qMenu); }
+
+  /* ---------- Source selector ---------- */
+  function buildSourceMenu(){
+    var html = "";
+    SOURCES.forEach(function(s){
+      html += '<button class="q-item" type="button" role="option" aria-selected="' +
+        (s.id === currentSource.id ? "true" : "false") + '" tabindex="-1" data-src="' + s.id + '">' +
+        '<span class="q-bar" aria-hidden="true"></span>' +
+        '<span class="q-lbl">' + s.name + '</span>' +
+        '<span class="q-rate">' + s.note + '</span>' +
+      '</button>';
+    });
+    sList.innerHTML = html;
+    [].slice.call(sList.querySelectorAll(".q-item")).forEach(function(btn){
+      btn.addEventListener("click", function(e){
+        e.stopPropagation();
+        closeMenu(sBtn, sMenu);
+        sBtn.focus();
+        selectSource(btn.dataset.src);
+      });
+    });
+    sName.textContent = currentSource.name;
+  }
+  function selectSource(id){
+    var s = sourceById(id);
+    if(s.id === currentSource.id) return;
+    currentSource = s;
+    try{ localStorage.setItem("bbg.source", s.id); }catch(e){}
+    [].slice.call(sList.querySelectorAll(".q-item")).forEach(function(b){
+      b.setAttribute("aria-selected", b.dataset.src === s.id ? "true" : "false");
+    });
+    sName.textContent = s.name;
+
+    /* Switching is a deliberate restart, not a failure. Clear the backoff
+       ladder so it reconnects at once, and drop the native src as well —
+       otherwise Safari keeps decoding the previous feed underneath. */
+    retryCount = 0; netRecovery = 0; mediaRecovery = 0;
+    clearTimeout(retryTimer); clearInterval(countdownTimer);
+    destroyHls();
+    try{
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }catch(e){}
+    playHls();
+  }
+  buildSourceMenu();
+
   /* ---------- Quality selector, built from real manifest levels ---------- */
   function levelLabel(l){ return l.height ? (l.height + "p") : (Math.round((l.bitrate || 0) / 1000) + "k"); }
   function levelBadge(l){ return l.height >= 1080 ? "FHD" : (l.height >= 720 ? "HD" : ""); }
@@ -525,35 +659,6 @@
     rate.textContent = (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel])
       ? ("当前 " + levelLabel(hls.levels[hls.currentLevel])) : "";
   }
-  function openQMenu(){
-    if(qBtn.disabled) return;
-    qMenu.hidden = false;
-    qBtn.setAttribute("aria-expanded", "true");
-    var sel = qList.querySelector('.q-item[aria-selected="true"]') || qList.querySelector(".q-item");
-    if(sel) sel.focus();
-  }
-  function closeQMenu(){
-    qMenu.hidden = true;
-    qBtn.setAttribute("aria-expanded", "false");
-  }
-  qBtn.addEventListener("click", function(e){
-    e.stopPropagation();
-    if(qMenu.hidden) openQMenu(); else closeQMenu();
-  });
-  qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
-  qMenu.addEventListener("keydown", function(e){
-    var items = [].slice.call(qList.querySelectorAll(".q-item"));
-    if(!items.length) return;
-    var i = items.indexOf(document.activeElement), k = e.key;
-    if(k === "ArrowDown" || k === "ArrowUp"){
-      e.preventDefault();
-      var n = (i < 0) ? 0 : (i + (k === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-      items[n].focus();
-    } else if(k === "Home"){ e.preventDefault(); items[0].focus(); }
-    else if(k === "End"){ e.preventDefault(); items[items.length - 1].focus(); }
-    else if(k === "Escape" || k === "Tab"){ e.preventDefault(); closeQMenu(); qBtn.focus(); }
-  });
-  document.addEventListener("click", function(){ closeQMenu(); });
 
   /* ---------- Live edge ----------
      hls.latency is the real distance from the live edge. liveSyncPosition is
@@ -638,7 +743,7 @@
         levelLoadingTimeOut: 8000,
         fragLoadingTimeOut: 12000
       });
-      hls.loadSource(HLS_URL);
+      hls.loadSource(streamUrl());
       hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
         retryCount = 0; netRecovery = 0; mediaRecovery = 0;
@@ -666,11 +771,16 @@
          becomes a readout and latency is whatever the OS player decides. */
       qMode.textContent = "系统解码";
       qBtn.title = "当前由系统直接解码 HLS，不提供可选清晰度列表";
-      video.src = HLS_URL;
+      var mySrc = streamUrl();
+      video.src = mySrc;
       video.addEventListener("loadedmetadata", function(){
+        if(video.src !== mySrc) return; // a source switch superseded this load
         retryCount = 0; clearState(); video.play().catch(noop); showHint();
       }, {once:true});
-      video.addEventListener("error", function(){ scheduleRetry("直播连接中断"); }, {once:true});
+      video.addEventListener("error", function(){
+        if(video.src !== mySrc) return;
+        scheduleRetry("直播连接中断");
+      }, {once:true});
     } else {
       showError("该浏览器既不支持 MSE，也不支持原生 HLS 播放。");
       stateTxt.textContent = "当前浏览器无法播放此直播流";
@@ -734,9 +844,9 @@
   document.addEventListener("keydown", function(e){
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
-    if(!qMenu.hidden){
-      if(k === "escape"){ closeQMenu(); qBtn.focus(); }
-      return; // the open menu owns the keyboard
+    if(!qMenu.hidden || !sMenu.hidden){
+      if(k === "escape"){ closeAllMenus(); }
+      return; // an open menu owns the keyboard
     }
     var tag = document.activeElement ? document.activeElement.tagName : "";
     var onControl = (tag === "BUTTON" || tag === "A" || tag === "INPUT");
@@ -750,6 +860,9 @@
       toggleFullscreen();
     } else if(k === "l"){
       jumpToLive();
+    } else if(k === "s"){
+      e.preventDefault();
+      openMenu(sBtn, sMenu, sList);
     }
   });
 
