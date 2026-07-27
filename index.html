@@ -220,6 +220,8 @@
   .q-btn:disabled{cursor:default;}
   .q-mode{color:var(--muted); transition:color .18s;}
   .q-btn:hover:not(:disabled) .q-mode,.q-btn[aria-expanded="true"] .q-mode{color:var(--accent-2);}
+  /* The locked rung could not be sustained and the guard stepped down. */
+  .q-btn.degraded .q-mode{color:var(--accent-2);}
   .q-thin{width:1px; height:9px; background:currentColor; opacity:.32;}
   .q-chev{width:9px; height:9px; opacity:.5; transition:transform .2s cubic-bezier(.2,.8,.2,1), opacity .18s;}
   .q-btn:disabled .q-chev{opacity:0;}
@@ -254,6 +256,7 @@
     background:rgba(255,255,255,.07); color:var(--muted);}
   .q-badge.is-fhd{background:rgba(255,106,0,.17); color:var(--accent-2);}
   .q-rate{flex:none; font-size:10.5px; font-weight:500; letter-spacing:.03em; color:var(--faint);}
+  .q-rate.warn{color:var(--accent-2);}
   .q-foot{margin-top:4px; padding:8px 11px 6px; border-top:1px solid var(--line);
     font-size:10px; font-weight:400; letter-spacing:.04em; line-height:1.5; color:var(--faint);}
   .q-foot[hidden]{display:none;}
@@ -350,7 +353,7 @@
       <div class="q-pop" id="qMenu" role="listbox" aria-label="画质" hidden>
         <div class="q-head"><b>画质</b><span id="qSrc">自适应</span></div>
         <div class="q-list" id="qList"></div>
-        <div class="q-foot" id="qFoot" hidden>以此档起播并作为上限。带宽不足时会自动降档保流畅，恢复后再自动回升。</div>
+        <div class="q-foot" id="qFoot" hidden>已锁定该档位，不会随带宽波动乱跳。只有当缓冲即将耗尽时才临时降一档，稳定后自动升回。</div>
       </div>
     </div>
 
@@ -445,6 +448,15 @@
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
   var measuredBps = 0;   // EWMA of the real encoded bitrate
   var heightIndex = {};  // picture height -> the level index the menu offers
+
+  /* Quality state. lockedIdx is what you asked for and is never touched by
+     the guard; fallbackIdx is a temporary detour the guard is currently
+     enforcing. Keeping them separate is what lets the choice survive a rough
+     patch instead of being quietly rewritten by it. */
+  var lockedIdx = -1;    // -1 = auto
+  var fallbackIdx = -1;  // -1 = no detour in force
+  var thinTicks = 0, healthyTicks = 0;
+  var THIN_SECS = 2.5, THIN_HOLD = 4, HEALTHY_SECS = 8, HEALTHY_HOLD = 45;
 
   function noop(){}
   function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
@@ -597,7 +609,10 @@
     closeQMenu();
     qList.innerHTML = "";
     heightIndex = {};
+    lockedIdx = -1; fallbackIdx = -1;
+    thinTicks = 0; healthyTicks = 0;
     qBtn.disabled = true;
+    qBtn.classList.remove("degraded");
     qBtn.title = "选择画质";
     qMode.textContent = (prefQuality === "auto") ? "自动" : (prefQuality + "p");
     qSrc.textContent = "自适应";
@@ -625,11 +640,11 @@
         e.stopPropagation();
         var v = btn.dataset.level;
         if(v === "auto"){
-          applyCeiling(-1);
+          applyLevel(-1);
           savePref("auto");
         } else {
           var idx = parseInt(v, 10), lv = hls.levels[idx];
-          applyCeiling(idx);
+          applyLevel(idx);
           savePref(lv && lv.height ? String(lv.height) : "auto");
         }
         measuredBps = 0; // the rung changed; start the average over
@@ -640,36 +655,87 @@
     });
     applyPreferredLevel();
   }
-  /* A ceiling, not a pin.
-     Hard-setting currentLevel is exactly what makes a live stream stall
-     instead of degrade: when the link cannot sustain that rung there is no
-     way down, so the buffer drains and playback halts. Capping the ABR
-     leaves the escape hatch open — it opens at the chosen rung, steps down
-     only when the network genuinely cannot hold it, and climbs back by
-     itself. "1080p" should mean "no better than 1080p", not "1080p or
-     nothing". */
-  function applyCeiling(idx){
+
+  /* A pick is a lock, not a hint.
+     An earlier revision routed the choice through autoLevelCapping so ABR
+     could still override it. That cured the stalling by making the menu
+     meaningless — you could select 1080p and simply keep watching 720p.
+     The lock is back; what keeps it from stalling is guardTick() below,
+     which steps down only on demonstrated starvation and steps back up on
+     its own. */
+  function applyLevel(idx){
     if(!hls) return;
+    lockedIdx = idx;
+    fallbackIdx = -1;
+    thinTicks = 0; healthyTicks = 0;
+    qBtn.classList.remove("degraded");
     try{
-      hls.autoLevelCapping = idx;
-      hls.currentLevel = -1; // hand control back to ABR, under the cap
+      hls.autoLevelCapping = -1;
+      hls.currentLevel = idx;         // -1 hands control to ABR
       if(idx >= 0) hls.startLevel = idx;
     }catch(e){}
   }
+  /* The next rung down among the ones the menu actually offers, so the guard
+     and the menu never disagree about which index represents a height. */
+  function nextLowerIndex(cur){
+    if(!hls || !hls.levels[cur]) return -1;
+    var curH = hls.levels[cur].height || 0;
+    var heights = Object.keys(heightIndex).map(Number).sort(function(a, b){ return b - a; });
+    for(var i = 0; i < heights.length; i++){
+      if(heights[i] < curH) return heightIndex[heights[i]];
+    }
+    return -1;
+  }
+  /* Buffer ahead of the playhead is the only signal that actually predicts a
+     stall — bandwidth estimates lag, and latency says nothing about whether
+     the next fragment will arrive in time. Both thresholds are held for
+     several consecutive seconds so a single slow segment cannot demote the
+     picture, and a brief calm cannot promote it back into another stall. */
+  function guardTick(){
+    if(!hls || lockedIdx < 0 || video.paused) return;
+    var buf = bufferAhead();
+    if(!isFinite(buf)) return;
+    var cur = (fallbackIdx >= 0) ? fallbackIdx : lockedIdx;
+
+    if(buf < THIN_SECS){
+      healthyTicks = 0;
+      if(++thinTicks < THIN_HOLD) return;
+      thinTicks = 0;
+      var lower = nextLowerIndex(cur);
+      if(lower < 0) return;           // already at the bottom rung
+      fallbackIdx = lower;
+      measuredBps = 0;
+      try{ hls.currentLevel = lower; }catch(e){}
+      qBtn.classList.add("degraded");
+      updateActiveRate();
+    } else if(buf > HEALTHY_SECS && fallbackIdx >= 0){
+      thinTicks = 0;
+      if(++healthyTicks < HEALTHY_HOLD) return;
+      healthyTicks = 0;
+      fallbackIdx = -1;
+      measuredBps = 0;
+      try{ hls.currentLevel = lockedIdx; }catch(e){}
+      qBtn.classList.remove("degraded");
+      updateActiveRate();
+    } else {
+      thinTicks = 0;
+    }
+  }
+
   /* Resolve the remembered height against the ladder this feed actually
      offers: exact match first, then the best rung at or below it, then the
      highest available. "1080p" therefore degrades to "as good as this feed
      gets" instead of silently reverting to auto. */
   function applyPreferredLevel(){
     if(prefQuality === "auto"){
-      applyCeiling(-1);
+      applyLevel(-1);
       setActiveQuality("auto");
       return;
     }
     var want = parseInt(prefQuality, 10);
     var heights = Object.keys(heightIndex).map(Number).sort(function(a, b){ return b - a; });
     if(!heights.length || !isFinite(want)){
-      applyCeiling(-1);
+      applyLevel(-1);
       setActiveQuality("auto");
       return;
     }
@@ -678,7 +744,7 @@
     if(pick < 0){ for(i = 0; i < heights.length; i++){ if(heights[i] <= want){ pick = heights[i]; break; } } }
     if(pick < 0) pick = heights[0];
 
-    applyCeiling(heightIndex[pick]);
+    applyLevel(heightIndex[pick]);
     measuredBps = 0;
     setActiveQuality(String(heightIndex[pick]));
   }
@@ -693,13 +759,13 @@
     } else {
       var l = hls && hls.levels[parseInt(v, 10)];
       qMode.textContent = l ? levelLabel(l) : "自动";
-      qSrc.textContent = "上限";
+      qSrc.textContent = "已锁定";
       qFoot.hidden = false;
     }
     updateActiveRate();
   }
-  /* The selected row is a request; this shows what the network actually
-     granted, so a silent downshift is visible rather than mysterious. */
+  /* The selected row states the request; this states what is on screen right
+     now, so a guard detour is visible rather than mysterious. */
   function updateActiveRate(){
     var row = qList.querySelector('.q-item[aria-selected="true"]');
     if(!row) return;
@@ -707,13 +773,14 @@
     if(!cell) return;
     var lv = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
     if(row.dataset.level === "auto"){
+      cell.classList.remove("warn");
       cell.textContent = lv ? ("当前 " + levelLabel(lv)) : "";
       return;
     }
     var want = hls && hls.levels[parseInt(row.dataset.level, 10)];
-    cell.textContent = (lv && want && lv.height !== want.height)
-      ? ("已降至 " + levelLabel(lv))
-      : rateLabel(want && want.bitrate);
+    var detoured = (fallbackIdx >= 0 && lv && want && lv.height !== want.height);
+    cell.classList.toggle("warn", !!detoured);
+    cell.textContent = detoured ? ("临时降至 " + levelLabel(lv)) : rateLabel(want && want.bitrate);
   }
 
   /* ---------- Live edge ----------
@@ -812,10 +879,10 @@
         abrEwmaDefaultEstimate: 2500000,
         testBandwidth: false,
         startFragPrefetch: true,
-        /* Require real headroom before stepping up, so ABR stops oscillating
-           into a rung it cannot hold and immediately falling out of it. */
+        /* These only govern explicit auto mode now; a manual pick bypasses ABR
+           entirely and is protected by guardTick() instead. */
         abrBandWidthFactor: 0.9,
-        abrBandWidthUpFactor: 0.6,
+        abrBandWidthUpFactor: 0.7,
 
         /* Retry a slow segment rather than tearing the session down: on a
            long-haul path a single lost fragment is normal, not fatal. */
@@ -959,7 +1026,10 @@
     if(document.hidden) return;
     if(!hls && !retryTimer) return;
     /* Coming back from a background tab, the gap is usually far larger than
-       the rate controller can absorb, so seek rather than crawl forward. */
+       the rate controller can absorb, so seek rather than crawl forward.
+       Reset the guard too: a backgrounded tab starves the buffer for reasons
+       that say nothing about the connection. */
+    thinTicks = 0; healthyTicks = 0;
     var l = latency();
     if(isFinite(l) && l > targetLatency() + 10) jumpToLive();
   });
@@ -988,6 +1058,7 @@
       liveBtn.classList.toggle("behind", behind);
       liveTxt.textContent = behind ? "回到直播" : "LIVE";
 
+      guardTick();
       if(!qMenu.hidden) updateActiveRate();
     }catch(e){}
   }, 1000);
