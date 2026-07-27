@@ -1,77 +1,144 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#06070a">
+<meta name="description" content="Bloomberg Television 官方直播流，纯净全屏播放。">
 <title>Bloomberg Live</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0c0f'/%3E%3Crect x='11' y='7' width='4.5' height='18' rx='2' fill='%23ff6a00'/%3E%3Crect x='18' y='13' width='4.5' height='12' rx='2' fill='%23ff9a4d'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#060709; --line:#1c242d;
-    --text:#f2f4f7; --muted:#98a2ad; --muted-2:#616a74;
+    --bg:#06070a;
+    --line:rgba(255,255,255,.07);
+    --line-strong:rgba(255,255,255,.15);
+    --text:#f4f6f8; --muted:#98a2ad; --faint:#5f6871;
     --accent:#ff6a00; --accent-2:#ff9a4d; --live:#27d17c;
-    --radius:16px;
-    --hel:'Helvetica Neue',Helvetica,Arial,sans-serif;
+    --radius:18px;
+    --amb:rgba(255,106,0,.16);
+    --pad-x:clamp(16px,3.2vw,34px);
+    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif;
+    --mark:'Helvetica Neue',Helvetica,Arial,sans-serif;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body{height:100%;}
   body{
-    background:
-      radial-gradient(1100px 560px at 88% -12%, rgba(255,106,0,.10), transparent 58%),
-      radial-gradient(900px 520px at -8% 112%, rgba(38,92,170,.10), transparent 55%),
-      var(--bg);
-    color:var(--text);
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+    background:var(--bg); color:var(--text); font-family:var(--font);
+    font-feature-settings:'tnum' 1;
     -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-    display:flex; flex-direction:column;
     height:100vh; height:100dvh; overflow:hidden;
-    animation:appIn .6s ease both;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
-  @keyframes appIn{from{opacity:0; transform:translateY(6px);}to{opacity:1; transform:none;}}
-  header{
+  /* Ambient light bled from the picture, sampled at ~1Hz. */
+  .ambient{
+    position:fixed; inset:-20%; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(48% 44% at 50% 12%, var(--amb), transparent 72%),
+      radial-gradient(58% 50% at 90% -10%, rgba(255,106,0,.06), transparent 62%),
+      radial-gradient(55% 48% at -8% 110%, rgba(38,92,170,.08), transparent 62%);
+    filter:blur(56px) saturate(140%);
+    transition:background 1.6s cubic-bezier(.4,0,.2,1);
+  }
+  .app{position:relative; z-index:1; display:flex; flex-direction:column; height:100%;
+    animation:appIn .55s cubic-bezier(.22,.61,.36,1) both;}
+  @keyframes appIn{from{opacity:0; transform:translateY(8px);}to{opacity:1; transform:none;}}
+
+  /* ---------- Header ---------- */
+  .bar{
     position:relative; z-index:10; flex:none;
-    display:flex; align-items:center; gap:20px; flex-wrap:wrap;
-    padding:18px 30px;
-    background:linear-gradient(180deg,rgba(14,19,24,.88),rgba(14,19,24,.55));
-    backdrop-filter:blur(20px) saturate(150%); -webkit-backdrop-filter:blur(20px) saturate(150%);
+    display:flex; align-items:center; gap:clamp(12px,2vw,22px); flex-wrap:wrap;
+    padding:14px var(--pad-x);
+    background:linear-gradient(180deg,rgba(12,16,21,.86),rgba(12,16,21,.42));
+    backdrop-filter:blur(22px) saturate(150%); -webkit-backdrop-filter:blur(22px) saturate(150%);
     border-bottom:1px solid var(--line);
   }
-  header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
-    background:linear-gradient(90deg,transparent,rgba(255,106,0,.45),transparent);}
-  .brand{display:flex; align-items:center;}
-  .brand h1{font-family:var(--hel); font-size:25px; font-weight:700; letter-spacing:-.025em; line-height:1; color:#fff;}
-  .live-pill{margin-left:auto; display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:999px;
-    background:rgba(39,209,124,.10); border:1px solid rgba(39,209,124,.34); color:#73e6a9;
-    font-size:11px; font-weight:700; letter-spacing:.14em;}
-  .live-pill .pulse{width:7px; height:7px; border-radius:50%; background:var(--live); animation:pulse 1.8s infinite;}
-  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(39,209,124,.55);}70%{box-shadow:0 0 0 8px rgba(39,209,124,0);}100%{box-shadow:0 0 0 0 rgba(39,209,124,0);}}
-  .stage{flex:1 1 auto; min-height:0; display:flex; padding:24px 30px 30px;}
-  .screen{position:relative; flex:1 1 auto; min-height:0; min-width:0; display:flex; align-items:center; justify-content:center;
-    border-radius:var(--radius); overflow:hidden; background:#000; cursor:pointer;
-    box-shadow:0 34px 90px rgba(0,0,0,.62), 0 0 0 1px rgba(255,255,255,.05);}
+  .bar::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,106,0,.4),transparent);}
+  .brand{display:flex; align-items:center; gap:12px; min-width:0;}
+  .mark{flex:none; width:9px; height:23px; border-radius:3px;
+    background:linear-gradient(180deg,var(--accent),#ff8f39);
+    box-shadow:0 0 20px rgba(255,106,0,.5);}
+  .brand h1{font-family:var(--mark); font-size:clamp(20px,2.4vw,25px); font-weight:700;
+    letter-spacing:-.026em; line-height:1; color:#fff; white-space:nowrap;}
+  .sep{width:1px; height:15px; background:var(--line-strong);}
+  .sub{font-size:10px; font-weight:600; letter-spacing:.24em; color:var(--faint); white-space:nowrap;}
+
+  .live{display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:999px;
+    background:rgba(39,209,124,.10); border:1px solid rgba(39,209,124,.32); color:#73e6a9;
+    font-family:inherit; font-size:11px; font-weight:700; letter-spacing:.14em; cursor:default;
+    transition:background .22s, border-color .22s, color .22s;}
+  .live .dot{width:7px; height:7px; border-radius:50%; background:var(--live); animation:pulse 1.9s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(39,209,124,.5);}70%{box-shadow:0 0 0 8px rgba(39,209,124,0);}100%{box-shadow:0 0 0 0 rgba(39,209,124,0);}}
+  .live.behind{background:rgba(255,106,0,.11); border-color:rgba(255,106,0,.36); color:var(--accent-2);
+    letter-spacing:.04em; cursor:pointer;}
+  .live.behind .dot{background:var(--accent); animation:none;}
+  .live.behind:hover{background:rgba(255,106,0,.18);}
+
+  .clocks{margin-left:auto; display:flex; align-items:flex-start; gap:clamp(14px,2vw,26px);}
+  .clock{display:flex; flex-direction:column; gap:3px; align-items:flex-end;}
+  .clock .tz{font-size:9.5px; font-weight:600; letter-spacing:.16em; color:var(--faint); white-space:nowrap;}
+  .clock time{font-size:14px; font-weight:500; letter-spacing:.02em; color:var(--text);
+    font-variant-numeric:tabular-nums; line-height:1.1;}
+  .session{font-size:9.5px; font-weight:700; letter-spacing:.1em; padding:1px 6px; border-radius:4px;
+    border:1px solid transparent;}
+  .session.on{color:#73e6a9; background:rgba(39,209,124,.1); border-color:rgba(39,209,124,.26);}
+  .session.pre{color:var(--accent-2); background:rgba(255,106,0,.1); border-color:rgba(255,106,0,.26);}
+  .session.off{color:var(--faint); background:rgba(255,255,255,.04); border-color:var(--line);}
+
+  /* ---------- Stage ---------- */
+  .stage{flex:1 1 auto; min-height:0; display:flex; padding:clamp(14px,2.2vw,26px) var(--pad-x) 0;}
+  .screen{position:relative; flex:1 1 auto; min-height:0; min-width:0;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:var(--radius); overflow:hidden; background:#000;
+    box-shadow:0 36px 96px rgba(0,0,0,.64), 0 0 0 1px rgba(255,255,255,.05);}
+  .screen.mutedState{cursor:pointer;}
   .screen::before{content:""; position:absolute; inset:0; z-index:4; pointer-events:none; border-radius:var(--radius);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
-  .screen video{position:relative; z-index:1; width:100%; height:100%;
-    object-fit:contain; background:#000;}
-  .screen video::cue{ background:rgba(0,0,0,.7); color:#fff; font-family:'Inter',-apple-system,sans-serif; font-size:0.72em; line-height:1.35; text-shadow:0 1px 2px rgba(0,0,0,.6); }
+  .screen video{position:relative; z-index:1; width:100%; height:100%; object-fit:contain; background:#000;}
+  .screen video::cue{background:rgba(0,0,0,.7); color:#fff; font-family:var(--font);
+    font-size:.72em; line-height:1.35; text-shadow:0 1px 2px rgba(0,0,0,.6);}
 
-  /* Quality selector */
+  /* ---------- Connection state ---------- */
+  .state{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:3;
+    display:flex; flex-direction:column; align-items:center; gap:15px; text-align:center;
+    color:var(--muted); pointer-events:none; padding:0 24px;}
+  .state[hidden]{display:none;}
+  .state.error{pointer-events:auto;}
+  .spinner{width:28px; height:28px; border-radius:50%;
+    border:2.5px solid rgba(255,255,255,.13); border-top-color:var(--accent); animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .glyph{display:none; width:30px; height:30px; color:var(--accent-2);}
+  .state.error .spinner{display:none;}
+  .state.error .glyph{display:block;}
+  .stateText{font-size:14px; font-weight:500; letter-spacing:.02em; font-variant-numeric:tabular-nums;}
+  .retryNow{display:none; padding:7px 15px; border-radius:9px; cursor:pointer;
+    background:rgba(255,255,255,.06); border:1px solid var(--line-strong); color:var(--text);
+    font-family:inherit; font-size:12.5px; font-weight:500; transition:background .18s, border-color .18s;}
+  .retryNow:hover{background:rgba(255,255,255,.11); border-color:rgba(255,255,255,.26);}
+  .state.error .retryNow{display:inline-flex;}
+
+  /* ---------- Quality selector ---------- */
   .quality{position:absolute; top:14px; right:14px; z-index:6; opacity:0; transform:translateY(-4px);
     transition:opacity .25s ease, transform .25s ease; pointer-events:none;}
-  .screen:hover .quality, .quality.open{opacity:1; transform:none; pointer-events:auto;}
+  .screen:hover .quality, .quality.open, .quality:focus-within{opacity:1; transform:none; pointer-events:auto;}
   .q-btn{display:inline-flex; align-items:center; gap:7px; padding:7px 11px; border-radius:10px;
     background:rgba(8,11,14,.6); backdrop-filter:blur(14px) saturate(150%); -webkit-backdrop-filter:blur(14px) saturate(150%);
-    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; font-family:'Inter',sans-serif; font-size:12px; font-weight:600;
+    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; font-family:inherit; font-size:12px; font-weight:600;
     letter-spacing:.01em; cursor:pointer; transition:border-color .2s, background .2s;}
-  .q-btn:hover{background:rgba(8,11,14,.8); border-color:rgba(255,255,255,.28);}
+  .q-btn:hover{background:rgba(8,11,14,.82); border-color:rgba(255,255,255,.28);}
   .q-btn svg{width:14px; height:14px;}
-  .q-menu{position:absolute; top:calc(100% + 6px); right:0; min-width:140px; padding:6px; border-radius:12px;
-    background:rgba(8,11,14,.84); backdrop-filter:blur(18px) saturate(150%); -webkit-backdrop-filter:blur(18px) saturate(150%);
-    border:1px solid rgba(255,255,255,.12); box-shadow:0 18px 44px rgba(0,0,0,.55); display:flex; flex-direction:column; gap:2px;}
+  .q-menu{position:absolute; top:calc(100% + 6px); right:0; min-width:148px; padding:6px; border-radius:12px;
+    background:rgba(8,11,14,.86); backdrop-filter:blur(18px) saturate(150%); -webkit-backdrop-filter:blur(18px) saturate(150%);
+    border:1px solid rgba(255,255,255,.12); box-shadow:0 18px 44px rgba(0,0,0,.55);
+    display:flex; flex-direction:column; gap:2px;}
+  .q-menu[hidden]{display:none;}
   .q-item{display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:8px; background:transparent; border:0;
-    color:#cfd6dd; font-family:'Inter',sans-serif; font-size:12.5px; font-weight:500; cursor:pointer; text-align:left; width:100%;
+    color:#cfd6dd; font-family:inherit; font-size:12.5px; font-weight:500; cursor:pointer; text-align:left; width:100%;
     transition:background .15s, color .15s;}
   .q-item:hover{background:rgba(255,255,255,.07); color:#fff;}
   .q-item.active{color:#fff;}
@@ -81,166 +148,492 @@
   .q-item .hd{font-size:9px; font-weight:700; letter-spacing:.05em; padding:1px 5px; border-radius:4px;
     background:rgba(255,106,0,.16); color:var(--accent-2);}
 
-  .status{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--muted); font-size:14px;
-    font-weight:500; letter-spacing:.02em; text-align:center; z-index:2; pointer-events:none;
-    display:flex; flex-direction:column; align-items:center; gap:14px;}
-  .status:not(:empty)::before{content:""; width:28px; height:28px; border-radius:50%;
-    border:2.5px solid rgba(255,255,255,.14); border-top-color:var(--accent); animation:spin 1s linear infinite;}
-  @keyframes spin{to{transform:rotate(360deg);}}
-  .hint{position:absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:5; display:none; align-items:center; gap:8px;
-    padding:9px 16px; border-radius:999px; background:rgba(6,8,10,.62); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-    border:1px solid rgba(255,255,255,.11); color:var(--text); font-size:12.5px; font-weight:500; box-shadow:0 8px 24px rgba(0,0,0,.4);}
+  /* ---------- Unmute hint ---------- */
+  .hint{position:absolute; bottom:58px; left:50%; transform:translateX(-50%); z-index:5; display:none;
+    align-items:center; gap:8px; padding:9px 16px; border-radius:999px;
+    background:rgba(6,8,10,.66); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.11); color:var(--text); font-size:12.5px; font-weight:500;
+    box-shadow:0 8px 24px rgba(0,0,0,.4); pointer-events:none;}
   .hint.show{display:flex; animation:hintFade 5.5s ease forwards;}
   .hint svg{width:15px; height:15px; fill:var(--accent);}
   @keyframes hintFade{0%{opacity:0; transform:translateX(-50%) translateY(8px);}12%,72%{opacity:1; transform:translateX(-50%) translateY(0);}100%{opacity:0; transform:translateX(-50%) translateY(8px); visibility:hidden;}}
-  @media(max-width:680px){
-    header{padding:14px 16px; gap:12px;} .stage{padding:14px 16px 18px;}
-    .brand h1{font-size:22px;}
+
+  /* ---------- Status rail ---------- */
+  .rail{flex:none; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:11px var(--pad-x) 13px; font-size:11px; font-weight:500; letter-spacing:.05em;
+    color:var(--faint); font-variant-numeric:tabular-nums;}
+  .rail .sep-dot{width:3px; height:3px; border-radius:50%; background:currentColor; opacity:.45;}
+  .rail .spacer{flex:1 1 auto;}
+  .keys{display:flex; align-items:center; gap:11px; letter-spacing:.04em;}
+  .keys span{display:inline-flex; align-items:center; gap:5px;}
+  kbd{font-family:inherit; font-size:9.5px; font-weight:600; letter-spacing:.04em; padding:2px 5px;
+    border-radius:4px; border:1px solid var(--line-strong); background:rgba(255,255,255,.03); color:var(--muted);}
+
+  :focus-visible{outline:2px solid var(--accent-2); outline-offset:2px; border-radius:6px;}
+
+  /* Touch devices never fire :hover, so keep the control reachable. */
+  @media (hover:none){
+    .quality{opacity:1; transform:none; pointer-events:auto;}
+  }
+  @media (max-width:900px){
+    .keys{display:none;}
+  }
+  @media (max-width:680px){
+    .bar{padding:12px var(--pad-x); gap:10px;}
+    .sep,.sub{display:none;}
+    .clocks{gap:14px;}
+    .clock .tz{font-size:9px;}
+    .clock time{font-size:12.5px;}
+    .rail .m-hide{display:none;}
+    .hint{bottom:46px;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms !important; animation-iteration-count:1 !important;
+      transition-duration:.001ms !important;}
   }
 </style>
 </head>
 <body>
-  <header>
-    <div class="brand"><h1>Bloomberg</h1></div>
-    <span class="live-pill"><span class="pulse"></span>LIVE</span>
-  </header>
-  <div class="stage">
-    <div class="screen" id="screen">
-      <div class="status" id="status"></div>
-      <div class="quality" id="quality" hidden>
-        <button class="q-btn" id="qBtn" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-          <span id="qLabel">Auto</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:11px;height:11px;opacity:.6"><path d="M6 9l6 6 6-6"/></svg>
-        </button>
-        <div class="q-menu" id="qMenu" hidden></div>
+<div class="ambient" id="ambient" aria-hidden="true"></div>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <h1>Bloomberg</h1>
+      <span class="sep" aria-hidden="true"></span>
+      <span class="sub">TELEVISION</span>
+    </div>
+    <button class="live" id="liveBtn" type="button" title="回到直播边缘（L）">
+      <span class="dot" aria-hidden="true"></span><span id="liveTxt">LIVE</span>
+    </button>
+    <div class="clocks">
+      <div class="clock">
+        <span class="tz">NEW YORK</span>
+        <time id="nyTime">--:--:--</time>
+        <span class="session off" id="session">—</span>
       </div>
-      <div class="hint" id="hint"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
+      <div class="clock">
+        <span class="tz" id="localTz">LOCAL</span>
+        <time id="localTime">--:--:--</time>
+      </div>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div class="screen mutedState" id="screen">
+      <div class="state" id="state">
+        <div class="spinner" aria-hidden="true"></div>
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 1.8 20.6h20.4L12 3Z"/><path d="M12 10v4.3"/><path d="M12 17.7h.01"/></svg>
+        <p class="stateText" id="stateText" aria-live="polite"></p>
+        <button class="retryNow" id="retryNow" type="button">立即重试</button>
+      </div>
+
+      <div class="quality" id="quality" hidden>
+        <button class="q-btn" id="qBtn" type="button" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+          <span id="qLabel">Auto</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:11px;height:11px;opacity:.6" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="q-menu" id="qMenu" role="menu" hidden></div>
+      </div>
+
+      <div class="hint" id="hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
+
       <video id="video" playsinline controls style="display:none"></video>
     </div>
-  </div>
+  </main>
+
+  <footer class="rail">
+    <span>bloomberg.com · HLS</span>
+    <span class="sep-dot m-hide" aria-hidden="true"></span>
+    <span class="m-hide" id="statRes">—</span>
+    <span class="sep-dot m-hide" aria-hidden="true"></span>
+    <span class="m-hide" id="statRate">—</span>
+    <span class="sep-dot" aria-hidden="true"></span>
+    <span id="statLat">—</span>
+    <span class="spacer"></span>
+    <span class="keys">
+      <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span>
+    </span>
+  </footer>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
+(function(){
+  "use strict";
+
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
 
-  var video = document.getElementById("video");
-  var statusEl = document.getElementById("status");
-  var hintEl = document.getElementById("hint");
+  var video    = document.getElementById("video");
   var screenEl = document.getElementById("screen");
-  var qWrap = document.getElementById("quality");
-  var qBtn = document.getElementById("qBtn");
-  var qLabel = document.getElementById("qLabel");
-  var qMenu = document.getElementById("qMenu");
+  var stateEl  = document.getElementById("state");
+  var stateTxt = document.getElementById("stateText");
+  var retryBtn = document.getElementById("retryNow");
+  var hintEl   = document.getElementById("hint");
+  var qWrap    = document.getElementById("quality");
+  var qBtn     = document.getElementById("qBtn");
+  var qLabel   = document.getElementById("qLabel");
+  var qMenu    = document.getElementById("qMenu");
+  var liveBtn  = document.getElementById("liveBtn");
+  var liveTxt  = document.getElementById("liveTxt");
+  var statRes  = document.getElementById("statRes");
+  var statRate = document.getElementById("statRate");
+  var statLat  = document.getElementById("statLat");
+
   var hls = null;
-  var retryTimer = null;
-  var retryCount = 0;
+  var retryTimer = null, countdownTimer = null;
+  var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
 
-  function setStatus(t){ statusEl.textContent = t || ""; }
+  function noop(){}
+  function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
+
+  /* ---------- Connection state ---------- */
+  function showLoading(text){
+    stateEl.hidden = false; stateEl.classList.remove("error");
+    stateTxt.textContent = text; setTitle(retryCount ? "重连中" : "");
+  }
+  function showError(){ stateEl.hidden = false; stateEl.classList.add("error"); setTitle("重连中"); }
+  function clearState(){
+    stateEl.hidden = true; stateEl.classList.remove("error");
+    stateTxt.textContent = ""; setTitle("");
+  }
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
-  function destroyHls(){ if(hls){ hls.destroy(); hls=null; } }
+  function destroyHls(){ if(hls){ try{ hls.destroy(); }catch(e){} hls = null; } }
 
-  // 只用 Bloomberg HLS：连不上时显示重连提示并每 5 秒自动重试（不再回退到 YouTube）
+  /* Capped exponential backoff beats hammering a CDN every 5s forever. */
+  function backoffMs(n){
+    var steps = [3000, 5000, 8000, 13000, 21000, 30000];
+    return steps[Math.min(n - 1, steps.length - 1)];
+  }
   function scheduleRetry(){
     retryCount++;
-    setStatus("直播连接失败，正在重试（第 " + retryCount + " 次）…");
+    var wait = backoffMs(retryCount), due = Date.now() + wait;
+    showError();
+    clearInterval(countdownTimer);
+    function tick(){
+      var left = Math.max(0, Math.ceil((due - Date.now()) / 1000));
+      stateTxt.textContent = "直播连接中断 · " + left + " 秒后重试（第 " + retryCount + " 次）";
+    }
+    tick();
+    countdownTimer = setInterval(tick, 250);
     clearTimeout(retryTimer);
-    retryTimer = setTimeout(playHls, 5000);
+    retryTimer = setTimeout(playHls, wait);
   }
+  function retryNow(){ clearTimeout(retryTimer); clearInterval(countdownTimer); playHls(); }
+  retryBtn.addEventListener("click", retryNow);
 
-  // ---- Captions: pure native bottom rendering (identical to the original project) ----
+  /* ---------- Captions: native bottom rendering ---------- */
   function normalizeCaptions(track){
     var cues = track.cues;
     if(!cues) return;
-    for(var i=0;i<cues.length;i++){
-      var c=cues[i];
+    for(var i = 0; i < cues.length; i++){
+      var c = cues[i];
       if(c.__norm) continue;
       c.__norm = 1;
       try{ c.snapToLines = true; c.line = "auto"; c.position = "auto"; c.align = "center"; }catch(e){}
     }
   }
   function bindCaptionTrack(t){
-    if(!t || (t.kind!=="captions" && t.kind!=="subtitles")) return;
+    if(!t || (t.kind !== "captions" && t.kind !== "subtitles")) return;
     normalizeCaptions(t);
     t.addEventListener("cuechange", function(){ normalizeCaptions(t); });
   }
   if(video.textTracks){
-    for(var ti=0; ti<video.textTracks.length; ti++) bindCaptionTrack(video.textTracks[ti]);
+    for(var ti = 0; ti < video.textTracks.length; ti++) bindCaptionTrack(video.textTracks[ti]);
     video.textTracks.addEventListener("addtrack", function(e){ bindCaptionTrack(e.track); });
   }
 
-  // ---- Quality selector (built from real manifest levels) ----
-  function levelLabel(l){ return l.height ? (l.height + "p") : (Math.round((l.bitrate||0)/1000) + "k"); }
-  function levelBadge(l){ return l.height>=1080 ? "FHD" : (l.height>=720 ? "HD" : ""); }
+  /* ---------- Quality selector, built from real manifest levels ---------- */
+  function levelLabel(l){ return l.height ? (l.height + "p") : (Math.round((l.bitrate || 0) / 1000) + "k"); }
+  function levelBadge(l){ return l.height >= 1080 ? "FHD" : (l.height >= 720 ? "HD" : ""); }
   function tickSvg(){ return '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="#ff9a4d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>'; }
-  function itemHtml(level,label,badge){
-    return '<button class="q-item" type="button" data-level="'+level+'">'+tickSvg()+'<span class="lbl">'+label+'</span>'+(badge?'<span class="hd">'+badge+'</span>':'')+'</button>';
+  function itemHtml(level, label, badge){
+    return '<button class="q-item" type="button" role="menuitemradio" data-level="' + level + '">' +
+      tickSvg() + '<span class="lbl">' + label + '</span>' +
+      (badge ? '<span class="hd">' + badge + '</span>' : '') + '</button>';
   }
   function buildQualityMenu(){
-    if(!hls || !hls.levels || !hls.levels.length){ qWrap.hidden=true; return; }
-    var idxs = hls.levels.map(function(l,i){return i;}).sort(function(a,b){
-      var la=hls.levels[a], lb=hls.levels[b];
-      return (lb.height||0)-(la.height||0) || (lb.bitrate||0)-(la.bitrate||0);
+    if(!hls || !hls.levels || !hls.levels.length){ qWrap.hidden = true; return; }
+    var idxs = hls.levels.map(function(l, i){ return i; }).sort(function(a, b){
+      var la = hls.levels[a], lb = hls.levels[b];
+      return (lb.height || 0) - (la.height || 0) || (lb.bitrate || 0) - (la.bitrate || 0);
     });
-    var seen={}, html = itemHtml("auto","Auto","");
-    idxs.forEach(function(i){ var l=hls.levels[i], h=l.height||0; if(seen[h]) return; seen[h]=1; html += itemHtml(String(i), levelLabel(l), levelBadge(l)); });
+    var seen = {}, html = itemHtml("auto", "Auto", "");
+    idxs.forEach(function(i){
+      var l = hls.levels[i], h = l.height || 0;
+      if(seen[h]) return;
+      seen[h] = 1;
+      html += itemHtml(String(i), levelLabel(l), levelBadge(l));
+    });
     qMenu.innerHTML = html;
     qWrap.hidden = false;
     qMenu.querySelectorAll(".q-item").forEach(function(btn){
       btn.addEventListener("click", function(e){
         e.stopPropagation();
-        var v=btn.dataset.level;
-        hls.currentLevel = (v==="auto") ? -1 : parseInt(v,10);
-        setActiveQuality(v); closeQMenu();
+        var v = btn.dataset.level;
+        hls.currentLevel = (v === "auto") ? -1 : parseInt(v, 10);
+        setActiveQuality(v);
+        closeQMenu();
       });
     });
     setActiveQuality("auto");
   }
   function setActiveQuality(v){
-    qMenu.querySelectorAll(".q-item").forEach(function(b){ b.classList.toggle("active", b.dataset.level===v); });
-    if(v==="auto"){ updateAutoLabel(); }
-    else { var l=hls.levels[parseInt(v,10)]; if(l) qLabel.textContent = levelLabel(l); }
+    qMenu.querySelectorAll(".q-item").forEach(function(b){ b.classList.toggle("active", b.dataset.level === v); });
+    if(v === "auto"){ updateAutoLabel(); }
+    else { var l = hls.levels[parseInt(v, 10)]; if(l) qLabel.textContent = levelLabel(l); }
   }
   function updateAutoLabel(){
     var active = qMenu.querySelector(".q-item.active");
-    if(!active || active.dataset.level!=="auto") return;
-    var suffix = (hls && hls.currentLevel>=0 && hls.levels[hls.currentLevel]) ? (" \u00b7 " + levelLabel(hls.levels[hls.currentLevel])) : "";
+    if(!active || active.dataset.level !== "auto") return;
+    var suffix = (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel])
+      ? (" \u00b7 " + levelLabel(hls.levels[hls.currentLevel])) : "";
     qLabel.textContent = "Auto" + suffix;
   }
-  function closeQMenu(){ qMenu.hidden=true; qWrap.classList.remove("open"); }
-  qBtn.addEventListener("click", function(e){ e.stopPropagation(); var willOpen=qMenu.hidden; qMenu.hidden=!willOpen; qWrap.classList.toggle("open", willOpen); });
+  function closeQMenu(){ qMenu.hidden = true; qWrap.classList.remove("open"); qBtn.setAttribute("aria-expanded", "false"); }
+  qBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    var willOpen = qMenu.hidden;
+    qMenu.hidden = !willOpen;
+    qWrap.classList.toggle("open", willOpen);
+    qBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  });
   qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
-  document.addEventListener("click", function(){ closeQMenu(); });
+  document.addEventListener("click", closeQMenu);
 
+  /* ---------- Live edge ---------- */
+  function liveEdge(){
+    if(hls && isFinite(hls.liveSyncPosition)) return hls.liveSyncPosition;
+    var b = video.buffered;
+    return (b && b.length) ? b.end(b.length - 1) : NaN;
+  }
+  function latency(){
+    var e = liveEdge();
+    return isFinite(e) ? Math.max(0, e - video.currentTime) : NaN;
+  }
+  function jumpToLive(){
+    var e = liveEdge();
+    if(!isFinite(e)) return;
+    try{ video.currentTime = e; }catch(err){}
+    video.play().catch(noop);
+  }
+  liveBtn.addEventListener("click", function(){ if(liveBtn.classList.contains("behind")) jumpToLive(); });
+
+  /* ---------- Playback ---------- */
   function playHls(){
-    clearTimeout(retryTimer);
-    video.style.display="block";
-    if(retryCount===0) setStatus("正在连接 Bloomberg 官方直播…");
-    destroyHls(); video.muted=true;
+    clearTimeout(retryTimer); clearInterval(countdownTimer);
+    video.style.display = "block";
+    showLoading(retryCount === 0 ? "正在连接 Bloomberg 官方直播…" : "正在重新连接…");
+    destroyHls();
+    video.muted = true;
+    screenEl.classList.add("mutedState");
+
     if(window.Hls && window.Hls.isSupported()){
-      hls=new window.Hls({ enableWorker:true, lowLatencyMode:true,
-        liveSyncDurationCount:2, liveMaxLatencyDurationCount:6 });
-      hls.loadSource(HLS_URL); hls.attachMedia(video);
+      hls = new window.Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 6,
+        backBufferLength: 60
+      });
+      hls.loadSource(HLS_URL);
+      hls.attachMedia(video);
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
-        retryCount=0; setStatus(""); buildQualityMenu();
-        video.play().catch(function(){}); showHint();
+        retryCount = 0; netRecovery = 0; mediaRecovery = 0;
+        clearState(); buildQualityMenu();
+        video.play().catch(noop);
+        showHint();
       });
       hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){ updateAutoLabel(); });
-      hls.on(window.Hls.Events.ERROR, function(_e,data){ if(data && data.fatal){ destroyHls(); scheduleRetry(); } });
+      hls.on(window.Hls.Events.FRAG_BUFFERED, function(){ netRecovery = 0; mediaRecovery = 0; });
+      hls.on(window.Hls.Events.ERROR, onHlsError);
     } else if(video.canPlayType("application/vnd.apple.mpegurl")){
-      qWrap.hidden=true;
-      video.src=HLS_URL;
-      video.addEventListener("loadedmetadata", function(){ retryCount=0; setStatus(""); video.play().catch(function(){}); showHint(); }, {once:true});
+      qWrap.hidden = true;
+      video.src = HLS_URL;
+      video.addEventListener("loadedmetadata", function(){
+        retryCount = 0; clearState(); video.play().catch(noop); showHint();
+      }, {once:true});
       video.addEventListener("error", function(){ scheduleRetry(); }, {once:true});
     } else {
-      setStatus("当前浏览器不支持该直播流");
+      showError();
+      stateTxt.textContent = "当前浏览器不支持该直播流";
     }
   }
 
-  screenEl.addEventListener("click", function(){
-    if(video.style.display!=="none" && video.muted){ video.muted=false; video.play().catch(function(){}); hintEl.classList.remove("show"); }
+  /* A fatal error is not always terminal: hls.js can reattach the loader or
+     flush the buffer in place. Try both twice before tearing everything down. */
+  function onHlsError(_evt, data){
+    if(!data || !data.fatal) return;
+    var T = window.Hls.ErrorTypes;
+    if(data.type === T.NETWORK_ERROR && netRecovery < 2){
+      netRecovery++;
+      showLoading("网络中断，正在恢复…");
+      try{ hls.startLoad(); return; }catch(e){}
+    }
+    if(data.type === T.MEDIA_ERROR && mediaRecovery < 2){
+      mediaRecovery++;
+      showLoading("解码异常，正在自愈…");
+      try{ hls.recoverMediaError(); return; }catch(e){}
+    }
+    destroyHls();
+    scheduleRetry();
+  }
+
+  /* ---------- Audio ---------- */
+  try{
+    var savedVol = parseFloat(localStorage.getItem("bbg.volume"));
+    if(isFinite(savedVol)) video.volume = Math.min(1, Math.max(0, savedVol));
+  }catch(e){}
+  video.addEventListener("volumechange", function(){
+    screenEl.classList.toggle("mutedState", video.muted);
+    try{ if(!video.muted) localStorage.setItem("bbg.volume", String(video.volume)); }catch(e){}
+  });
+  function unmute(){
+    if(video.style.display === "none" || !video.muted) return;
+    video.muted = false;
+    video.play().catch(noop);
+    hintEl.classList.remove("show");
+  }
+  screenEl.addEventListener("click", unmute);
+
+  /* ---------- Fullscreen ---------- */
+  function toggleFullscreen(){
+    try{
+      var fs = document.fullscreenElement || document.webkitFullscreenElement;
+      if(fs){
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      } else if(screenEl.requestFullscreen){
+        screenEl.requestFullscreen();
+      } else if(screenEl.webkitRequestFullscreen){
+        screenEl.webkitRequestFullscreen();
+      } else if(video.webkitEnterFullscreen){
+        video.webkitEnterFullscreen();
+      }
+    }catch(e){}
+  }
+  screenEl.addEventListener("dblclick", toggleFullscreen);
+
+  /* ---------- Keyboard ---------- */
+  document.addEventListener("keydown", function(e){
+    if(e.metaKey || e.ctrlKey || e.altKey) return;
+    var tag = document.activeElement ? document.activeElement.tagName : "";
+    var onControl = (tag === "BUTTON" || tag === "A" || tag === "INPUT");
+    var k = (e.key || "").toLowerCase();
+    if(k === " " || k === "k"){
+      if(onControl && k === " ") return; // let space activate the focused control
+      e.preventDefault();
+      if(video.paused) video.play().catch(noop); else video.pause();
+    } else if(k === "m"){
+      if(video.muted) unmute(); else video.muted = true;
+    } else if(k === "f"){
+      toggleFullscreen();
+    } else if(k === "l"){
+      jumpToLive();
+    } else if(k === "escape"){
+      closeQMenu();
+    }
   });
 
+  /* ---------- Self-healing ---------- */
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden) return;
+    if(!hls && !retryTimer) return;
+    var l = latency();
+    if(isFinite(l) && l > 15) jumpToLive();
+  });
+  window.addEventListener("online", function(){ if(!hls) retryNow(); });
+
+  /* ---------- Telemetry rail ---------- */
+  setInterval(function(){
+    try{
+      statRes.textContent = video.videoWidth ? (video.videoWidth + "×" + video.videoHeight) : "—";
+      var l = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
+      statRate.textContent = (l && l.bitrate) ? (Math.round(l.bitrate / 1000).toLocaleString() + " kbps") : "—";
+      var lat = latency();
+      statLat.textContent = isFinite(lat) ? ("延迟 " + lat.toFixed(1) + "s") : "—";
+      var behind = isFinite(lat) && lat > 12 && !video.paused;
+      liveBtn.classList.toggle("behind", behind);
+      liveTxt.textContent = behind ? "回到直播" : "LIVE";
+    }catch(e){}
+  }, 1000);
+
+  /* ---------- Clocks ---------- */
+  var nyTime = document.getElementById("nyTime");
+  var localTime = document.getElementById("localTime");
+  var sessionEl = document.getElementById("session");
+  var nyFmt, localFmt, partsFmt;
+  try{
+    nyFmt = new Intl.DateTimeFormat("en-GB", {timeZone:"America/New_York", hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
+    localFmt = new Intl.DateTimeFormat("en-GB", {hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
+    partsFmt = new Intl.DateTimeFormat("en-US", {timeZone:"America/New_York", weekday:"short", hour:"2-digit", minute:"2-digit", hourCycle:"h23"});
+    var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    if(tz) document.getElementById("localTz").textContent = tz.split("/").pop().replace(/_/g, " ").toUpperCase();
+  }catch(e){}
+
+  /* Session is derived from New York wall-clock time only; market holidays
+     are not modelled, so a holiday still reads as an open session. */
+  function nySession(){
+    var p = partsFmt.formatToParts(new Date()), o = {};
+    p.forEach(function(x){ o[x.type] = x.value; });
+    var wd = o.weekday;
+    var mins = (parseInt(o.hour, 10) % 24) * 60 + parseInt(o.minute, 10);
+    if(wd === "Sat" || wd === "Sun") return {t:"周末休市", c:"off"};
+    if(mins >= 570 && mins < 960)  return {t:"开市",   c:"on"};
+    if(mins >= 240 && mins < 570)  return {t:"盘前",   c:"pre"};
+    if(mins >= 960 && mins < 1200) return {t:"盘后",   c:"pre"};
+    return {t:"休市", c:"off"};
+  }
+  function tickClocks(){
+    try{
+      var now = new Date();
+      if(nyFmt) nyTime.textContent = nyFmt.format(now);
+      if(localFmt) localTime.textContent = localFmt.format(now);
+      if(partsFmt){
+        var s = nySession();
+        sessionEl.textContent = s.t;
+        sessionEl.className = "session " + s.c;
+      }
+    }catch(e){}
+  }
+  tickClocks();
+  setInterval(tickClocks, 1000);
+
+  /* ---------- Ambient light ----------
+     hls.js feeds the element through MSE, so the surface stays same-origin
+     and readable. Safari's native HLS path taints it; we fail closed. */
+  (function(){
+    var reduce = false;
+    try{ reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){}
+    if(reduce) return;
+
+    var cv = document.createElement("canvas"), ctx = null, ok = true;
+    cv.width = 16; cv.height = 9;
+    try{ ctx = cv.getContext("2d", {willReadFrequently:true}); }catch(e){ return; }
+    if(!ctx) return;
+
+    setInterval(function(){
+      if(!ok || document.hidden || video.readyState < 2 || !video.videoWidth) return;
+      try{
+        ctx.drawImage(video, 0, 0, 16, 9);
+        var d = ctx.getImageData(0, 0, 16, 9).data;
+        var r = 0, g = 0, b = 0, n = 0;
+        for(var i = 0; i < d.length; i += 4){ r += d[i]; g += d[i+1]; b += d[i+2]; n++; }
+        r = r / n; g = g / n; b = b / n;
+        // Cap luminance so the glow stays a whisper, never a light show.
+        var peak = Math.max(r, g, b) || 1, k = Math.min(1.7, 175 / peak);
+        r = Math.round(Math.min(255, r * k));
+        g = Math.round(Math.min(255, g * k));
+        b = Math.round(Math.min(255, b * k));
+        document.documentElement.style.setProperty("--amb", "rgba(" + r + "," + g + "," + b + ",.17)");
+      }catch(e){
+        ok = false; // tainted canvas or decoder hiccup: stop trying, keep playing
+      }
+    }, 900);
+  })();
+
   playHls();
+})();
 </script>
 </body>
 </html>
