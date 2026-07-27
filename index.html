@@ -397,6 +397,24 @@
     for(var si = 0; si < SOURCES.length; si++) if(SOURCES[si].id === id) return SOURCES[si];
     return SOURCES[0];
   }
+
+  /* ---------- Stored preferences ----------
+     A one-time reset, because changing a default in source does not reach
+     anyone who already has the old value written to their browser. The pinned
+     era stored an explicit 1080p, which is read back on every load and
+     re-applied as a hard lock — so without this, the revert below would
+     appear to do nothing at all.
+
+     The remembered source is deliberately left alone: it is named in plain
+     sight on the rail and is one click to change, so overriding it would be
+     taking away a choice rather than undoing one. */
+  try{
+    if(localStorage.getItem("bbg.pref") !== "2"){
+      localStorage.removeItem("bbg.quality");
+      localStorage.setItem("bbg.pref", "2");
+    }
+  }catch(e){}
+
   var currentSource = SOURCES[0];
   try{
     var savedSource = localStorage.getItem("bbg.source");
