@@ -92,7 +92,10 @@
     height:100vh; height:100dvh; overflow:hidden;
     padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
-  /* Ambient light bled from the picture, sampled at ~0.6Hz. */
+  /* Static ambient wash. This used to be driven by a canvas that sampled the
+     video 40 times a minute; each sample was a synchronous GPU readback that
+     competed with the decoder for exactly the frames it was decorating. The
+     gradient below costs nothing and reads almost the same. */
   .ambient{
     position:fixed; inset:-20%; z-index:0; pointer-events:none;
     background:
@@ -100,7 +103,6 @@
       radial-gradient(58% 50% at 90% -10%, rgba(255,106,0,.06), transparent 62%),
       radial-gradient(55% 48% at -8% 110%, rgba(38,92,170,.08), transparent 62%);
     filter:blur(56px) saturate(140%);
-    transition:background 1.6s cubic-bezier(.4,0,.2,1);
   }
   .app{position:relative; z-index:1; display:flex; flex-direction:column; height:100%;
     animation:appIn .34s cubic-bezier(.22,.61,.36,1) both;}
@@ -207,8 +209,7 @@
   /* ---------- Rail popovers ----------
      Two controls share this component: the signal source and the picture
      quality. Both are promoted from the readout they replace, so the thing
-     that tells you the state is also the thing that changes it. No floating
-     overlay, nothing covering the frame, nothing hidden behind :hover. */
+     that tells you the state is also the thing that changes it. */
   .qsel{position:relative; display:inline-flex;}
   .q-btn{display:inline-flex; align-items:center; gap:7px; padding:4px 9px; margin:-4px 0;
     border-radius:8px; border:1px solid transparent; background:transparent;
@@ -220,8 +221,6 @@
   .q-btn:disabled{cursor:default;}
   .q-mode{color:var(--muted); transition:color .18s;}
   .q-btn:hover:not(:disabled) .q-mode,.q-btn[aria-expanded="true"] .q-mode{color:var(--accent-2);}
-  /* The locked rung could not be sustained and the guard stepped down. */
-  .q-btn.degraded .q-mode{color:var(--accent-2);}
   .q-thin{width:1px; height:9px; background:currentColor; opacity:.32;}
   .q-chev{width:9px; height:9px; opacity:.5; transition:transform .2s cubic-bezier(.2,.8,.2,1), opacity .18s;}
   .q-btn:disabled .q-chev{opacity:0;}
@@ -256,7 +255,6 @@
     background:rgba(255,255,255,.07); color:var(--muted);}
   .q-badge.is-fhd{background:rgba(255,106,0,.17); color:var(--accent-2);}
   .q-rate{flex:none; font-size:10.5px; font-weight:500; letter-spacing:.03em; color:var(--faint);}
-  .q-rate.warn{color:var(--accent-2);}
   .q-foot{margin-top:4px; padding:8px 11px 6px; border-top:1px solid var(--line);
     font-size:10px; font-weight:400; letter-spacing:.04em; line-height:1.5; color:var(--faint);}
   .q-foot[hidden]{display:none;}
@@ -331,13 +329,13 @@
       <button class="q-btn" id="sBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="sMenu" title="切换信号源（S）">
         <span class="q-mode">信号源</span>
         <span class="q-thin" aria-hidden="true"></span>
-        <span id="sName">US ALT</span>
+        <span id="sName">ASIA</span>
         <svg class="q-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
       </button>
       <div class="q-pop" id="sMenu" role="listbox" aria-label="信号源" hidden>
         <div class="q-head"><b>信号源</b><span>BLOOMBERG</span></div>
         <div class="q-list" id="sList"></div>
-        <div class="q-foot">各路信号的播出包装不同，回源机房也不同。卡顿频繁时可以换一路试试。</div>
+        <div class="q-foot">回源机房越近越稳。US ALT 带有完整的行情和新闻条，但机房在美东，路上要多走很远。</div>
       </div>
     </div>
 
@@ -345,7 +343,7 @@
 
     <div class="qsel">
       <button class="q-btn" id="qBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="qMenu" title="选择画质" disabled>
-        <span class="q-mode" id="qMode">1080p</span>
+        <span class="q-mode" id="qMode">自动</span>
         <span class="q-thin" aria-hidden="true"></span>
         <span id="qRes">—</span>
         <svg class="q-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
@@ -353,7 +351,7 @@
       <div class="q-pop" id="qMenu" role="listbox" aria-label="画质" hidden>
         <div class="q-head"><b>画质</b><span id="qSrc">自适应</span></div>
         <div class="q-list" id="qList"></div>
-        <div class="q-foot" id="qFoot" hidden>已锁定该档位，不会随带宽波动乱跳。只有当缓冲持续快耗尽时才会临时降一档（仅一档，不低于 720p），稳定后自动升回。</div>
+        <div class="q-foot" id="qFoot" hidden>已锁定该档位，不会再自动变动。如果卡顿，改回「自动」让播放器自己根据实际带宽选择。</div>
       </div>
     </div>
 
@@ -381,16 +379,19 @@
      but the broadcast graphics package baked into the video differs: the
      classic L-bar layout (main picture top-left, news crawl along the bottom,
      quote rail down the right side) is part of the encoded picture, not an
-     overlay we could add or remove. Nothing in the manifest declares this, so
-     it cannot be detected — it has to be a choice, and it is remembered.
-     phoenix-us leads the list because it is the feed that carries the full
-     package; SOURCES[0] is the first-visit default. */
+     overlay that could be added or removed here. Nothing in the manifest
+     declares it, so it cannot be detected — it has to be a choice.
+
+     ASIA leads the list because its origin is nearest, which is what actually
+     determines whether the picture holds together. US ALT carries the full
+     broadcast package but originates in US-East; that is a trade worth
+     offering and not worth making on someone's behalf. */
   var SOURCES = [
-    {id:"phoenix", name:"US ALT", note:"美国 · Phoenix",  url:"https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8"},
-    {id:"us",      name:"US",     note:"美国 · 数字版",  url:"https://www.bloomberg.com/media-manifest/streams/us.m3u8"},
-    {id:"eu",      name:"EUROPE", note:"欧洲频道",      url:"https://www.bloomberg.com/media-manifest/streams/eu.m3u8"},
-    {id:"asia",    name:"ASIA",   note:"亚洲频道",      url:"https://www.bloomberg.com/media-manifest/streams/asia.m3u8"},
-    {id:"aus",     name:"AU",     note:"澳洲频道",      url:"https://www.bloomberg.com/media-manifest/streams/aus.m3u8"}
+    {id:"asia",    name:"ASIA",   note:"亚洲 · 回源最近", url:"https://www.bloomberg.com/media-manifest/streams/asia.m3u8"},
+    {id:"phoenix", name:"US ALT", note:"美东 · 带行情条", url:"https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8"},
+    {id:"us",      name:"US",     note:"美国 · 数字版",   url:"https://www.bloomberg.com/media-manifest/streams/us.m3u8"},
+    {id:"eu",      name:"EUROPE", note:"欧洲频道",       url:"https://www.bloomberg.com/media-manifest/streams/eu.m3u8"},
+    {id:"aus",     name:"AU",     note:"澳洲频道",       url:"https://www.bloomberg.com/media-manifest/streams/aus.m3u8"}
   ];
   function sourceById(id){
     for(var si = 0; si < SOURCES.length; si++) if(SOURCES[si].id === id) return SOURCES[si];
@@ -404,10 +405,20 @@
   function streamUrl(){ return currentSource.url; }
 
   /* ---------- Quality preference ----------
+     Auto by default, and auto means auto: hls.js measures the link and picks,
+     which is the entire point of an adaptive ladder. A previous revision
+     defaulted this to 1080p and then spent several iterations building
+     machinery to survive the consequences. Worse, the preference is shared
+     across sources, so pinning it also pinned feeds that had been perfectly
+     happy adapting.
+
+     An explicit pick is still an explicit pick — a real level lock, obeyed
+     until changed. Nothing chooses on the viewer's behalf.
+
      Stored as a picture height, never as a level index: indices are specific
      to one manifest and would point at an unrelated rung on another feed. */
-  var DEFAULT_HEIGHT = "1080";
-  var prefQuality = DEFAULT_HEIGHT;
+  var DEFAULT_QUALITY = "auto";
+  var prefQuality = DEFAULT_QUALITY;
   try{
     var savedQuality = localStorage.getItem("bbg.quality");
     if(savedQuality) prefQuality = savedQuality;
@@ -448,19 +459,6 @@
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
   var measuredBps = 0;   // EWMA of the real encoded bitrate
   var heightIndex = {};  // picture height -> the level index the menu offers
-
-  /* ---------- Quality state ----------
-     lockedIdx is what you asked for and nothing but an explicit pick ever
-     changes it. fallbackIdx is a single temporary detour the guard may be
-     enforcing. Keeping them apart is what lets the choice survive a rough
-     patch instead of being quietly rewritten by it. */
-  var lockedIdx = -1;    // -1 = auto
-  var fallbackIdx = -1;  // -1 = no detour in force
-  var thinTicks = 0, healthyTicks = 0;
-  var guardHoldUntil = 0;      // guard sleeps until this timestamp
-  var THIN_SECS = 2.5, THIN_HOLD = 6, HEALTHY_SECS = 8, HEALTHY_HOLD = 45;
-  var GUARD_COOLDOWN = 20000;  // ms of silence after any switch
-  var GUARD_FLOOR = 720;       // the guard may never drop below this height
 
   function noop(){}
   function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
@@ -506,10 +504,7 @@
   function retryNow(){ clearTimeout(retryTimer); clearInterval(countdownTimer); playHls(); }
   retryBtn.addEventListener("click", retryNow);
 
-  /* ---------- Shared popover behaviour ----------
-     Both rail controls are listboxes anchored to their own trigger, so the
-     open/close and roving-focus logic lives in one place rather than being
-     written twice and drifting apart. */
+  /* ---------- Shared popover behaviour ---------- */
   function closeMenu(btn, pop){
     pop.hidden = true;
     btn.setAttribute("aria-expanded", "false");
@@ -613,10 +608,7 @@
     closeQMenu();
     qList.innerHTML = "";
     heightIndex = {};
-    lockedIdx = -1; fallbackIdx = -1;
-    thinTicks = 0; healthyTicks = 0; guardHoldUntil = 0;
     qBtn.disabled = true;
-    qBtn.classList.remove("degraded");
     qBtn.title = "选择画质";
     qMode.textContent = (prefQuality === "auto") ? "自动" : (prefQuality + "p");
     qSrc.textContent = "自适应";
@@ -660,94 +652,17 @@
     applyPreferredLevel();
   }
 
-  /* A pick is a lock, not a hint.
-     An earlier revision routed the choice through autoLevelCapping so ABR
-     could still override it. That cured the stalling by making the menu
-     meaningless — you could select 1080p and simply keep watching 720p.
-     The lock is back; guardTick() below is what keeps it from stalling. */
+  /* A pick is a lock; -1 hands control back to the adaptive ladder. */
   function applyLevel(idx){
     if(!hls) return;
-    lockedIdx = idx;
-    fallbackIdx = -1;
-    thinTicks = 0; healthyTicks = 0;
-    guardHoldUntil = Date.now() + GUARD_COOLDOWN;
-    qBtn.classList.remove("degraded");
     try{
-      hls.autoLevelCapping = -1;
-      hls.currentLevel = idx;         // -1 hands control to ABR
+      hls.currentLevel = idx;
       if(idx >= 0) hls.startLevel = idx;
     }catch(e){}
   }
-  /* The next rung down among the ones the menu actually offers, so the guard
-     and the menu never disagree about which index represents a height. */
-  function nextLowerIndex(from){
-    if(!hls || !hls.levels[from]) return -1;
-    var fromH = hls.levels[from].height || 0;
-    var heights = Object.keys(heightIndex).map(Number).sort(function(a, b){ return b - a; });
-    for(var i = 0; i < heights.length; i++){
-      if(heights[i] < fromH) return heightIndex[heights[i]];
-    }
-    return -1;
-  }
 
-  /* ---------- Stall guard ----------
-     Buffer ahead of the playhead is the only signal that actually predicts a
-     stall: bandwidth estimates lag, and latency says nothing about whether
-     the next fragment will arrive in time.
-
-     The hard-won rule here is that switching level *empties the buffer* and
-     refills it, so the reading taken right after a switch describes the
-     switch, not the network. An earlier version ignored that, read its own
-     after-effect as fresh starvation, and walked 1080p down to 272p four
-     seconds at a time on a link that streams 720p perfectly well. Hence:
-
-       - Any switch buys 20 seconds of silence before judging again.
-       - The guard has exactly ONE move: one rung below the locked rung.
-         Never a second step, never below 720p, and recovery goes straight
-         back to the lock. Cascading is structurally impossible, not merely
-         discouraged.
-       - Startup is not a symptom. It waits for the connecting overlay to
-         clear and for the decoder to actually have playable data. */
-  function guardTick(){
-    if(!hls || lockedIdx < 0 || video.paused) return;
-    if(!stateEl.hidden || video.readyState < 3) return;
-    if(Date.now() < guardHoldUntil) return;
-
-    var buf = bufferAhead();
-    if(!isFinite(buf)) return;
-
-    if(fallbackIdx < 0){
-      // Holding the locked rung: is it demonstrably unsustainable?
-      if(buf >= THIN_SECS){ thinTicks = 0; return; }
-      if(++thinTicks < THIN_HOLD) return;
-      thinTicks = 0;
-      var lower = nextLowerIndex(lockedIdx);
-      if(lower < 0) return;                                   // already lowest
-      if((hls.levels[lower].height || 0) < GUARD_FLOOR) return; // below the floor
-      fallbackIdx = lower;
-      measuredBps = 0;
-      guardHoldUntil = Date.now() + GUARD_COOLDOWN;
-      try{ hls.currentLevel = lower; }catch(e){}
-      qBtn.classList.add("degraded");
-      updateActiveRate();
-    } else {
-      // On the detour: has it been comfortable long enough to go back?
-      if(buf <= HEALTHY_SECS){ healthyTicks = 0; return; }
-      if(++healthyTicks < HEALTHY_HOLD) return;
-      healthyTicks = 0;
-      fallbackIdx = -1;
-      measuredBps = 0;
-      guardHoldUntil = Date.now() + GUARD_COOLDOWN;
-      try{ hls.currentLevel = lockedIdx; }catch(e){}
-      qBtn.classList.remove("degraded");
-      updateActiveRate();
-    }
-  }
-
-  /* Resolve the remembered height against the ladder this feed actually
-     offers: exact match first, then the best rung at or below it, then the
-     highest available. "1080p" therefore degrades to "as good as this feed
-     gets" instead of silently reverting to auto. */
+  /* Resolve a remembered height against the ladder this feed actually offers:
+     exact match first, then the best rung at or below it, then auto. */
   function applyPreferredLevel(){
     if(prefQuality === "auto"){
       applyLevel(-1);
@@ -764,7 +679,7 @@
     var pick = -1, i;
     for(i = 0; i < heights.length; i++){ if(heights[i] === want){ pick = heights[i]; break; } }
     if(pick < 0){ for(i = 0; i < heights.length; i++){ if(heights[i] <= want){ pick = heights[i]; break; } } }
-    if(pick < 0) pick = heights[0];
+    if(pick < 0){ applyLevel(-1); setActiveQuality("auto"); return; }
 
     applyLevel(heightIndex[pick]);
     measuredBps = 0;
@@ -786,26 +701,16 @@
     }
     updateActiveRate();
   }
-  /* The selected row states the request; this states what is on screen right
-     now, so a guard detour is visible rather than mysterious. It reports a
-     detour only when the guard is actually holding one — never because the
-     decoder is a moment behind the switch. */
+  /* On the auto row, report which rung the ladder has actually settled on —
+     otherwise "自动" tells you nothing about what you are watching. */
   function updateActiveRate(){
     var row = qList.querySelector('.q-item[aria-selected="true"]');
     if(!row) return;
     var cell = row.querySelector(".q-rate");
     if(!cell) return;
+    if(row.dataset.level !== "auto") return;
     var lv = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
-    if(row.dataset.level === "auto"){
-      cell.classList.remove("warn");
-      cell.textContent = lv ? ("当前 " + levelLabel(lv)) : "";
-      return;
-    }
-    var want = hls && hls.levels[parseInt(row.dataset.level, 10)];
-    var held = (fallbackIdx >= 0) ? (hls && hls.levels[fallbackIdx]) : null;
-    var detoured = !!(held && want && held.height !== want.height);
-    cell.classList.toggle("warn", detoured);
-    cell.textContent = detoured ? ("临时降至 " + levelLabel(held)) : rateLabel(want && want.bitrate);
+    cell.textContent = lv ? ("当前 " + levelLabel(lv)) : "";
   }
 
   /* ---------- Live edge ----------
@@ -882,7 +787,7 @@
            nothing except a playhead pinned closer to the edge — which is
            precisely where there is no cushion left to absorb a slow segment.
            Three fragments back is hls.js's own default and the smallest
-           cushion that survives one late delivery on a long-haul path. */
+           cushion that survives one late delivery on a long path. */
         lowLatencyMode: false,
         liveSyncDurationCount: 3,
         liveMaxLatencyDurationCount: 12,
@@ -897,20 +802,18 @@
         maxBufferHole: 0.5,
         nudgeMaxRetry: 10,
 
-        /* Startup. The default bandwidth estimate is 0.5 Mbps, which makes the
-           very first level pick land near the bottom of the ladder and take
-           several fragments to climb. Seed it realistically and skip the
-           deliberate probe fragment. */
-        abrEwmaDefaultEstimate: 2500000,
-        testBandwidth: false,
+        /* No ABR overrides. A previous revision seeded the bandwidth estimate
+           at 2.5 Mbps and disabled the startup probe, which told the player to
+           open near the top of the ladder before it had measured anything.
+           Over a tunnelled connection that assumption is wrong in the
+           expensive direction: it opens too high, starves, and stalls. The
+           library's own conservative default starts low and climbs on
+           evidence, which is the correct behaviour on a link whose capacity
+           is unknown and variable. */
         startFragPrefetch: true,
-        /* These only govern explicit auto mode now; a manual pick bypasses ABR
-           entirely and is protected by guardTick() instead. */
-        abrBandWidthFactor: 0.9,
-        abrBandWidthUpFactor: 0.7,
 
-        /* Retry a slow segment rather than tearing the session down: on a
-           long-haul path a single lost fragment is normal, not fatal. */
+        /* Retry a slow segment rather than tearing the session down: on a long
+           path a single lost fragment is normal, not fatal. */
         manifestLoadingTimeOut: 8000,
         manifestLoadingMaxRetry: 3,
         manifestLoadingRetryDelay: 500,
@@ -925,8 +828,6 @@
       hls.on(window.Hls.Events.MANIFEST_PARSED, function(){
         retryCount = 0; netRecovery = 0; mediaRecovery = 0;
         clearState();
-        /* Runs before the first fragment is requested, so the preferred rung
-           is what actually opens — no climbing up from the bottom. */
         buildQualityMenu();
         video.play().catch(noop);
         showHint();
@@ -1051,11 +952,7 @@
     if(document.hidden) return;
     if(!hls && !retryTimer) return;
     /* Coming back from a background tab, the gap is usually far larger than
-       the rate controller can absorb, so seek rather than crawl forward.
-       Silence the guard as well: a backgrounded tab starves the buffer for
-       reasons that say nothing about the connection. */
-    thinTicks = 0; healthyTicks = 0;
-    guardHoldUntil = Date.now() + GUARD_COOLDOWN;
+       the rate controller can absorb, so seek rather than crawl forward. */
     var l = latency();
     if(isFinite(l) && l > targetLatency() + 10) jumpToLive();
   });
@@ -1084,7 +981,6 @@
       liveBtn.classList.toggle("behind", behind);
       liveTxt.textContent = behind ? "回到直播" : "LIVE";
 
-      guardTick();
       if(!qMenu.hidden) updateActiveRate();
     }catch(e){}
   }, 1000);
@@ -1129,45 +1025,6 @@
   }
   tickClocks();
   setInterval(tickClocks, 1000);
-
-  /* ---------- Ambient light ----------
-     hls.js feeds the element through MSE, so the surface stays same-origin
-     and readable. Safari's native HLS path taints it; we fail closed.
-     getImageData forces a synchronous GPU readback of a full frame, so this
-     samples slowly on purpose — at a high cadence it is real compositor
-     jank, and a glow is not worth dropped frames. */
-  (function(){
-    var reduce = false;
-    try{ reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){}
-    if(reduce) return;
-
-    var cv = document.createElement("canvas"), ctx = null, ok = true;
-    cv.width = 16; cv.height = 9;
-    try{ ctx = cv.getContext("2d", {willReadFrequently:true}); }catch(e){ return; }
-    if(!ctx) return;
-
-    setInterval(function(){
-      if(!ok || document.hidden || video.readyState < 2 || !video.videoWidth) return;
-      // Never compete with the decoder while the buffer is already thin.
-      var b = bufferAhead();
-      if(isFinite(b) && b < 3) return;
-      try{
-        ctx.drawImage(video, 0, 0, 16, 9);
-        var d = ctx.getImageData(0, 0, 16, 9).data;
-        var r = 0, g = 0, bl = 0, n = 0;
-        for(var i = 0; i < d.length; i += 4){ r += d[i]; g += d[i+1]; bl += d[i+2]; n++; }
-        r = r / n; g = g / n; bl = bl / n;
-        // Cap luminance so the glow stays a whisper, never a light show.
-        var peak = Math.max(r, g, bl) || 1, k = Math.min(1.7, 175 / peak);
-        r = Math.round(Math.min(255, r * k));
-        g = Math.round(Math.min(255, g * k));
-        bl = Math.round(Math.min(255, bl * k));
-        document.documentElement.style.setProperty("--amb", "rgba(" + r + "," + g + "," + bl + ",.17)");
-      }catch(e){
-        ok = false; // tainted canvas or decoder hiccup: stop trying, keep playing
-      }
-    }, 1600);
-  })();
 
   playHls();
 })();
