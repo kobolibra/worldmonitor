@@ -8,10 +8,8 @@
 <meta name="description" content="Bloomberg Television 官方直播流，纯净全屏播放。">
 <title>Bloomberg Live</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0c0f'/%3E%3Crect x='11' y='7' width='4.5' height='18' rx='2' fill='%23ff6a00'/%3E%3Crect x='18' y='13' width='4.5' height='12' rx='2' fill='%23ff9a4d'/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://www.bloomberg.com" crossorigin>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#06070a;
@@ -22,7 +20,8 @@
     --radius:18px;
     --amb:rgba(255,106,0,.16);
     --pad-x:clamp(16px,3.2vw,34px);
-    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif;
+    /* System stack: renders instantly, needs no third party, cannot fail. */
+    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI Variable Text','Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
     --mark:'Helvetica Neue',Helvetica,Arial,sans-serif;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
@@ -116,37 +115,13 @@
   .state.error .spinner{display:none;}
   .state.error .glyph{display:block;}
   .stateText{font-size:14px; font-weight:500; letter-spacing:.02em; font-variant-numeric:tabular-nums;}
+  .stateSub{font-size:11.5px; font-weight:400; letter-spacing:.03em; color:var(--faint); max-width:34ch; line-height:1.5;}
+  .stateSub:empty{display:none;}
   .retryNow{display:none; padding:7px 15px; border-radius:9px; cursor:pointer;
     background:rgba(255,255,255,.06); border:1px solid var(--line-strong); color:var(--text);
     font-family:inherit; font-size:12.5px; font-weight:500; transition:background .18s, border-color .18s;}
   .retryNow:hover{background:rgba(255,255,255,.11); border-color:rgba(255,255,255,.26);}
   .state.error .retryNow{display:inline-flex;}
-
-  /* ---------- Quality selector ---------- */
-  .quality{position:absolute; top:14px; right:14px; z-index:6; opacity:0; transform:translateY(-4px);
-    transition:opacity .25s ease, transform .25s ease; pointer-events:none;}
-  .screen:hover .quality, .quality.open, .quality:focus-within{opacity:1; transform:none; pointer-events:auto;}
-  .q-btn{display:inline-flex; align-items:center; gap:7px; padding:7px 11px; border-radius:10px;
-    background:rgba(8,11,14,.6); backdrop-filter:blur(14px) saturate(150%); -webkit-backdrop-filter:blur(14px) saturate(150%);
-    border:1px solid rgba(255,255,255,.14); color:#f2f4f7; font-family:inherit; font-size:12px; font-weight:600;
-    letter-spacing:.01em; cursor:pointer; transition:border-color .2s, background .2s;}
-  .q-btn:hover{background:rgba(8,11,14,.82); border-color:rgba(255,255,255,.28);}
-  .q-btn svg{width:14px; height:14px;}
-  .q-menu{position:absolute; top:calc(100% + 6px); right:0; min-width:148px; padding:6px; border-radius:12px;
-    background:rgba(8,11,14,.86); backdrop-filter:blur(18px) saturate(150%); -webkit-backdrop-filter:blur(18px) saturate(150%);
-    border:1px solid rgba(255,255,255,.12); box-shadow:0 18px 44px rgba(0,0,0,.55);
-    display:flex; flex-direction:column; gap:2px;}
-  .q-menu[hidden]{display:none;}
-  .q-item{display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:8px; background:transparent; border:0;
-    color:#cfd6dd; font-family:inherit; font-size:12.5px; font-weight:500; cursor:pointer; text-align:left; width:100%;
-    transition:background .15s, color .15s;}
-  .q-item:hover{background:rgba(255,255,255,.07); color:#fff;}
-  .q-item.active{color:#fff;}
-  .q-item .tick{width:13px; height:13px; flex:none; opacity:0;}
-  .q-item.active .tick{opacity:1;}
-  .q-item .lbl{flex:1;}
-  .q-item .hd{font-size:9px; font-weight:700; letter-spacing:.05em; padding:1px 5px; border-radius:4px;
-    background:rgba(255,106,0,.16); color:var(--accent-2);}
 
   /* ---------- Unmute hint ---------- */
   .hint{position:absolute; bottom:58px; left:50%; transform:translateX(-50%); z-index:5; display:none;
@@ -159,7 +134,8 @@
   @keyframes hintFade{0%{opacity:0; transform:translateX(-50%) translateY(8px);}12%,72%{opacity:1; transform:translateX(-50%) translateY(0);}100%{opacity:0; transform:translateX(-50%) translateY(8px); visibility:hidden;}}
 
   /* ---------- Status rail ---------- */
-  .rail{flex:none; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  .rail{position:relative; z-index:20; flex:none;
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
     padding:11px var(--pad-x) 13px; font-size:11px; font-weight:500; letter-spacing:.05em;
     color:var(--faint); font-variant-numeric:tabular-nums;}
   .rail .sep-dot{width:3px; height:3px; border-radius:50%; background:currentColor; opacity:.45;}
@@ -169,12 +145,62 @@
   kbd{font-family:inherit; font-size:9.5px; font-weight:600; letter-spacing:.04em; padding:2px 5px;
     border-radius:4px; border:1px solid var(--line-strong); background:rgba(255,255,255,.03); color:var(--muted);}
 
+  /* ---------- Quality: promoted from the rail's own resolution readout ----------
+     One object shows the current picture and changes it. No floating overlay,
+     nothing covering the frame, nothing hidden behind :hover. */
+  .qsel{position:relative; display:inline-flex;}
+  .q-btn{display:inline-flex; align-items:center; gap:7px; padding:4px 9px; margin:-4px 0;
+    border-radius:8px; border:1px solid transparent; background:transparent;
+    font:inherit; font-size:11px; font-weight:500; letter-spacing:.05em; color:var(--faint);
+    font-variant-numeric:tabular-nums; cursor:pointer; white-space:nowrap;
+    transition:color .18s, background .18s, border-color .18s;}
+  .q-btn:hover:not(:disabled){color:var(--text); background:rgba(255,255,255,.05); border-color:var(--line);}
+  .q-btn[aria-expanded="true"]{color:var(--text); background:rgba(255,255,255,.06); border-color:rgba(255,154,77,.34);}
+  .q-btn:disabled{cursor:default;}
+  .q-mode{color:var(--muted); transition:color .18s;}
+  .q-btn:hover:not(:disabled) .q-mode,.q-btn[aria-expanded="true"] .q-mode{color:var(--accent-2);}
+  .q-thin{width:1px; height:9px; background:currentColor; opacity:.32;}
+  .q-chev{width:9px; height:9px; opacity:.5; transition:transform .2s cubic-bezier(.2,.8,.2,1), opacity .18s;}
+  .q-btn:disabled .q-chev{opacity:0;}
+  .q-btn[aria-expanded="true"] .q-chev{transform:rotate(180deg); opacity:.95;}
+
+  .q-pop{position:absolute; bottom:calc(100% + 12px); left:-6px; z-index:40;
+    width:252px; max-width:calc(100vw - 32px); padding:6px; border-radius:14px;
+    background:rgba(10,13,17,.9);
+    backdrop-filter:blur(26px) saturate(170%); -webkit-backdrop-filter:blur(26px) saturate(170%);
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 26px 64px rgba(0,0,0,.68), inset 0 1px 0 rgba(255,255,255,.07);
+    transform-origin:bottom left; animation:popIn .16s cubic-bezier(.2,.8,.2,1) both;}
+  .q-pop[hidden]{display:none;}
+  @keyframes popIn{from{opacity:0; transform:translateY(7px) scale(.98);}to{opacity:1; transform:none;}}
+  .q-head{display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:8px 10px 9px; font-size:9.5px; font-weight:700; letter-spacing:.2em; color:var(--faint);}
+  .q-head b{font-weight:700; color:var(--muted); letter-spacing:.16em;}
+  .q-list{display:flex; flex-direction:column; gap:1px;}
+  .q-item{position:relative; display:flex; align-items:center; gap:9px; width:100%;
+    padding:9px 11px 9px 15px; border:0; border-radius:9px; background:transparent; text-align:left;
+    font:inherit; font-size:13px; font-weight:500; color:#c8d0d8; cursor:pointer;
+    font-variant-numeric:tabular-nums; transition:background .14s, color .14s;}
+  .q-item:hover{background:rgba(255,255,255,.06); color:#fff;}
+  .q-bar{position:absolute; left:5px; top:50%; width:2px; height:15px; margin-top:-7.5px; border-radius:2px;
+    background:linear-gradient(180deg,var(--accent),var(--accent-2));
+    transform:scaleY(0); transition:transform .2s cubic-bezier(.2,.8,.2,1);}
+  .q-item[aria-selected="true"]{color:#fff; background:rgba(255,255,255,.045);}
+  .q-item[aria-selected="true"] .q-bar{transform:scaleY(1);}
+  .q-lbl{flex:1 1 auto;}
+  .q-badge{flex:none; font-size:8.5px; font-weight:700; letter-spacing:.08em; padding:2px 5px; border-radius:4px;
+    background:rgba(255,255,255,.07); color:var(--muted);}
+  .q-badge.is-fhd{background:rgba(255,106,0,.17); color:var(--accent-2);}
+  .q-rate{flex:none; font-size:10.5px; font-weight:500; letter-spacing:.03em; color:var(--faint);}
+  .q-foot{margin-top:4px; padding:8px 11px 6px; border-top:1px solid var(--line);
+    font-size:10px; font-weight:400; letter-spacing:.04em; line-height:1.5; color:var(--faint);}
+  .q-foot[hidden]{display:none;}
+
   :focus-visible{outline:2px solid var(--accent-2); outline-offset:2px; border-radius:6px;}
 
-  /* Touch devices never fire :hover, so keep the control reachable. */
-  @media (hover:none){
-    .quality{opacity:1; transform:none; pointer-events:auto;}
-  }
+  .noscript{position:fixed; inset:0; z-index:99; display:flex; align-items:center; justify-content:center;
+    background:var(--bg); color:var(--muted); font-size:14px; text-align:center; padding:24px;}
+
   @media (max-width:900px){
     .keys{display:none;}
   }
@@ -225,16 +251,8 @@
         <div class="spinner" aria-hidden="true"></div>
         <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 1.8 20.6h20.4L12 3Z"/><path d="M12 10v4.3"/><path d="M12 17.7h.01"/></svg>
         <p class="stateText" id="stateText" aria-live="polite"></p>
+        <p class="stateSub" id="stateSub"></p>
         <button class="retryNow" id="retryNow" type="button">立即重试</button>
-      </div>
-
-      <div class="quality" id="quality" hidden>
-        <button class="q-btn" id="qBtn" type="button" aria-haspopup="true" aria-expanded="false">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-          <span id="qLabel">Auto</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:11px;height:11px;opacity:.6" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-        </button>
-        <div class="q-menu" id="qMenu" role="menu" hidden></div>
       </div>
 
       <div class="hint" id="hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
@@ -245,8 +263,22 @@
 
   <footer class="rail">
     <span>bloomberg.com · HLS</span>
-    <span class="sep-dot m-hide" aria-hidden="true"></span>
-    <span class="m-hide" id="statRes">—</span>
+    <span class="sep-dot" aria-hidden="true"></span>
+
+    <div class="qsel">
+      <button class="q-btn" id="qBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="qMenu" title="选择画质" disabled>
+        <span class="q-mode" id="qMode">自动</span>
+        <span class="q-thin" aria-hidden="true"></span>
+        <span id="qRes">—</span>
+        <svg class="q-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+      <div class="q-pop" id="qMenu" role="listbox" aria-label="画质" hidden>
+        <div class="q-head"><b>画质</b><span id="qSrc">自适应</span></div>
+        <div class="q-list" id="qList"></div>
+        <div class="q-foot" id="qFoot" hidden>已锁定该档位，带宽不足时不再自动降档。</div>
+      </div>
+    </div>
+
     <span class="sep-dot m-hide" aria-hidden="true"></span>
     <span class="m-hide" id="statRate">—</span>
     <span class="sep-dot" aria-hidden="true"></span>
@@ -258,45 +290,66 @@
   </footer>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
+
 <script>
 (function(){
   "use strict";
 
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
 
+  /* A single CDN is a single point of failure — especially on networks where
+     jsdelivr is slow, filtered, or silently hangs. Try each in order, with a
+     hard timeout, and only give up when every source has failed. */
+  var HLS_SOURCES = [
+    "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js",
+    "https://registry.npmmirror.com/hls.js/latest/files/dist/hls.min.js",
+    "https://unpkg.com/hls.js@1/dist/hls.min.js"
+  ];
+  var SOURCE_TIMEOUT = 6000;
+
   var video    = document.getElementById("video");
   var screenEl = document.getElementById("screen");
   var stateEl  = document.getElementById("state");
   var stateTxt = document.getElementById("stateText");
+  var stateSub = document.getElementById("stateSub");
   var retryBtn = document.getElementById("retryNow");
   var hintEl   = document.getElementById("hint");
-  var qWrap    = document.getElementById("quality");
-  var qBtn     = document.getElementById("qBtn");
-  var qLabel   = document.getElementById("qLabel");
-  var qMenu    = document.getElementById("qMenu");
   var liveBtn  = document.getElementById("liveBtn");
   var liveTxt  = document.getElementById("liveTxt");
-  var statRes  = document.getElementById("statRes");
   var statRate = document.getElementById("statRate");
   var statLat  = document.getElementById("statLat");
+
+  var qBtn  = document.getElementById("qBtn");
+  var qMode = document.getElementById("qMode");
+  var qRes  = document.getElementById("qRes");
+  var qMenu = document.getElementById("qMenu");
+  var qList = document.getElementById("qList");
+  var qFoot = document.getElementById("qFoot");
+  var qSrc  = document.getElementById("qSrc");
 
   var hls = null;
   var retryTimer = null, countdownTimer = null;
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
+  var libLoading = false;
 
   function noop(){}
   function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
+  function nativeOk(){ return !!video.canPlayType("application/vnd.apple.mpegurl"); }
 
   /* ---------- Connection state ---------- */
-  function showLoading(text){
+  function showLoading(text, sub){
     stateEl.hidden = false; stateEl.classList.remove("error");
-    stateTxt.textContent = text; setTitle(retryCount ? "重连中" : "");
+    stateTxt.textContent = text; stateSub.textContent = sub || "";
+    setTitle(retryCount ? "重连中" : "");
   }
-  function showError(){ stateEl.hidden = false; stateEl.classList.add("error"); setTitle("重连中"); }
+  function showError(sub){
+    stateEl.hidden = false; stateEl.classList.add("error");
+    stateSub.textContent = sub || ""; setTitle("重连中");
+  }
   function clearState(){
     stateEl.hidden = true; stateEl.classList.remove("error");
-    stateTxt.textContent = ""; setTitle("");
+    stateTxt.textContent = ""; stateSub.textContent = ""; setTitle("");
   }
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
   function destroyHls(){ if(hls){ try{ hls.destroy(); }catch(e){} hls = null; } }
@@ -306,14 +359,15 @@
     var steps = [3000, 5000, 8000, 13000, 21000, 30000];
     return steps[Math.min(n - 1, steps.length - 1)];
   }
-  function scheduleRetry(){
+  function scheduleRetry(reason, sub){
     retryCount++;
     var wait = backoffMs(retryCount), due = Date.now() + wait;
-    showError();
+    var label = reason || "直播连接中断";
+    showError(sub);
     clearInterval(countdownTimer);
     function tick(){
       var left = Math.max(0, Math.ceil((due - Date.now()) / 1000));
-      stateTxt.textContent = "直播连接中断 · " + left + " 秒后重试（第 " + retryCount + " 次）";
+      stateTxt.textContent = label + " · " + left + " 秒后重试（第 " + retryCount + " 次）";
     }
     tick();
     countdownTimer = setInterval(tick, 250);
@@ -322,6 +376,35 @@
   }
   function retryNow(){ clearTimeout(retryTimer); clearInterval(countdownTimer); playHls(); }
   retryBtn.addEventListener("click", retryNow);
+
+  /* ---------- Player library loader ---------- */
+  function loadLibrary(done){
+    if(window.Hls) return done(true);
+    if(libLoading) return;
+    libLoading = true;
+    var i = 0;
+    (function next(){
+      if(window.Hls){ libLoading = false; return done(true); }
+      if(i >= HLS_SOURCES.length){ libLoading = false; return done(false); }
+      var el = document.createElement("script"), settled = false;
+      var timer = setTimeout(function(){ fail(); }, SOURCE_TIMEOUT);
+      function fail(){
+        if(settled) return;
+        settled = true; clearTimeout(timer);
+        try{ if(el.parentNode) el.parentNode.removeChild(el); }catch(e){}
+        next();
+      }
+      el.async = true;
+      el.src = HLS_SOURCES[i++];
+      el.onload = function(){
+        if(settled) return;
+        settled = true; clearTimeout(timer);
+        if(window.Hls){ libLoading = false; done(true); } else { next(); }
+      };
+      el.onerror = fail;
+      document.head.appendChild(el);
+    })();
+  }
 
   /* ---------- Captions: native bottom rendering ---------- */
   function normalizeCaptions(track){
@@ -347,60 +430,107 @@
   /* ---------- Quality selector, built from real manifest levels ---------- */
   function levelLabel(l){ return l.height ? (l.height + "p") : (Math.round((l.bitrate || 0) / 1000) + "k"); }
   function levelBadge(l){ return l.height >= 1080 ? "FHD" : (l.height >= 720 ? "HD" : ""); }
-  function tickSvg(){ return '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="#ff9a4d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>'; }
-  function itemHtml(level, label, badge){
-    return '<button class="q-item" type="button" role="menuitemradio" data-level="' + level + '">' +
-      tickSvg() + '<span class="lbl">' + label + '</span>' +
-      (badge ? '<span class="hd">' + badge + '</span>' : '') + '</button>';
+  function rateLabel(bps){
+    if(!bps) return "";
+    return bps >= 1000000 ? (Math.round(bps / 100000) / 10 + " Mbps") : (Math.round(bps / 1000) + " kbps");
+  }
+  function itemHtml(level, label, badge, rate){
+    return '<button class="q-item" type="button" role="option" aria-selected="false" tabindex="-1" data-level="' + level + '">' +
+      '<span class="q-bar" aria-hidden="true"></span>' +
+      '<span class="q-lbl">' + label + '</span>' +
+      (badge ? '<span class="q-badge' + (badge === "FHD" ? " is-fhd" : "") + '">' + badge + '</span>' : '') +
+      '<span class="q-rate">' + (rate || "") + '</span>' +
+    '</button>';
+  }
+  function resetQuality(){
+    closeQMenu();
+    qList.innerHTML = "";
+    qBtn.disabled = true;
+    qMode.textContent = "自动";
+    qSrc.textContent = "自适应";
+    qFoot.hidden = true;
   }
   function buildQualityMenu(){
-    if(!hls || !hls.levels || !hls.levels.length){ qWrap.hidden = true; return; }
+    if(!hls || !hls.levels || !hls.levels.length){ resetQuality(); return; }
     var idxs = hls.levels.map(function(l, i){ return i; }).sort(function(a, b){
       var la = hls.levels[a], lb = hls.levels[b];
       return (lb.height || 0) - (la.height || 0) || (lb.bitrate || 0) - (la.bitrate || 0);
     });
-    var seen = {}, html = itemHtml("auto", "Auto", "");
+    var seen = {}, html = itemHtml("auto", "自动", "", "");
     idxs.forEach(function(i){
       var l = hls.levels[i], h = l.height || 0;
       if(seen[h]) return;
       seen[h] = 1;
-      html += itemHtml(String(i), levelLabel(l), levelBadge(l));
+      html += itemHtml(String(i), levelLabel(l), levelBadge(l), rateLabel(l.bitrate));
     });
-    qMenu.innerHTML = html;
-    qWrap.hidden = false;
-    qMenu.querySelectorAll(".q-item").forEach(function(btn){
+    qList.innerHTML = html;
+    qBtn.disabled = false;
+    [].slice.call(qList.querySelectorAll(".q-item")).forEach(function(btn){
       btn.addEventListener("click", function(e){
         e.stopPropagation();
         var v = btn.dataset.level;
         hls.currentLevel = (v === "auto") ? -1 : parseInt(v, 10);
         setActiveQuality(v);
         closeQMenu();
+        qBtn.focus();
       });
     });
     setActiveQuality("auto");
   }
   function setActiveQuality(v){
-    qMenu.querySelectorAll(".q-item").forEach(function(b){ b.classList.toggle("active", b.dataset.level === v); });
-    if(v === "auto"){ updateAutoLabel(); }
-    else { var l = hls.levels[parseInt(v, 10)]; if(l) qLabel.textContent = levelLabel(l); }
+    [].slice.call(qList.querySelectorAll(".q-item")).forEach(function(b){
+      b.setAttribute("aria-selected", b.dataset.level === v ? "true" : "false");
+    });
+    if(v === "auto"){
+      qMode.textContent = "自动";
+      qSrc.textContent = "自适应";
+      qFoot.hidden = true;
+      updateAutoLabel();
+    } else {
+      var l = hls && hls.levels[parseInt(v, 10)];
+      qMode.textContent = l ? levelLabel(l) : "自动";
+      qSrc.textContent = "已锁定";
+      qFoot.hidden = false;
+    }
   }
+  /* In auto mode the row shows which level the ABR actually settled on. */
   function updateAutoLabel(){
-    var active = qMenu.querySelector(".q-item.active");
-    if(!active || active.dataset.level !== "auto") return;
-    var suffix = (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel])
-      ? (" \u00b7 " + levelLabel(hls.levels[hls.currentLevel])) : "";
-    qLabel.textContent = "Auto" + suffix;
+    var row = qList.querySelector('.q-item[data-level="auto"]');
+    if(!row || row.getAttribute("aria-selected") !== "true") return;
+    var rate = row.querySelector(".q-rate");
+    if(!rate) return;
+    rate.textContent = (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel])
+      ? ("当前 " + levelLabel(hls.levels[hls.currentLevel])) : "";
   }
-  function closeQMenu(){ qMenu.hidden = true; qWrap.classList.remove("open"); qBtn.setAttribute("aria-expanded", "false"); }
+  function openQMenu(){
+    if(qBtn.disabled) return;
+    qMenu.hidden = false;
+    qBtn.setAttribute("aria-expanded", "true");
+    var sel = qList.querySelector('.q-item[aria-selected="true"]') || qList.querySelector(".q-item");
+    if(sel) sel.focus();
+  }
+  function closeQMenu(){
+    qMenu.hidden = true;
+    qBtn.setAttribute("aria-expanded", "false");
+  }
   qBtn.addEventListener("click", function(e){
     e.stopPropagation();
-    var willOpen = qMenu.hidden;
-    qMenu.hidden = !willOpen;
-    qWrap.classList.toggle("open", willOpen);
-    qBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    if(qMenu.hidden) openQMenu(); else closeQMenu();
   });
   qMenu.addEventListener("click", function(e){ e.stopPropagation(); });
-  document.addEventListener("click", closeQMenu);
+  qMenu.addEventListener("keydown", function(e){
+    var items = [].slice.call(qList.querySelectorAll(".q-item"));
+    if(!items.length) return;
+    var i = items.indexOf(document.activeElement), k = e.key;
+    if(k === "ArrowDown" || k === "ArrowUp"){
+      e.preventDefault();
+      var n = (i < 0) ? 0 : (i + (k === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[n].focus();
+    } else if(k === "Home"){ e.preventDefault(); items[0].focus(); }
+    else if(k === "End"){ e.preventDefault(); items[items.length - 1].focus(); }
+    else if(k === "Escape" || k === "Tab"){ e.preventDefault(); closeQMenu(); qBtn.focus(); }
+  });
+  document.addEventListener("click", function(){ closeQMenu(); });
 
   /* ---------- Live edge ---------- */
   function liveEdge(){
@@ -423,9 +553,23 @@
   /* ---------- Playback ---------- */
   function playHls(){
     clearTimeout(retryTimer); clearInterval(countdownTimer);
+
+    if(!window.Hls && !nativeOk()){
+      showLoading(retryCount === 0 ? "正在加载播放组件…" : "正在重新加载播放组件…");
+      loadLibrary(function(ok){
+        if(ok) startPlayback();
+        else scheduleRetry("播放组件加载失败", "三个镜像源都没能加载 hls.js。通常是网络受限或被广告拦截插件阻断——换个网络环境或关闭拦截插件后重试。");
+      });
+      return;
+    }
+    startPlayback();
+  }
+
+  function startPlayback(){
     video.style.display = "block";
     showLoading(retryCount === 0 ? "正在连接 Bloomberg 官方直播…" : "正在重新连接…");
     destroyHls();
+    resetQuality();
     video.muted = true;
     screenEl.classList.add("mutedState");
 
@@ -448,16 +592,17 @@
       hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){ updateAutoLabel(); });
       hls.on(window.Hls.Events.FRAG_BUFFERED, function(){ netRecovery = 0; mediaRecovery = 0; });
       hls.on(window.Hls.Events.ERROR, onHlsError);
-    } else if(video.canPlayType("application/vnd.apple.mpegurl")){
-      qWrap.hidden = true;
+    } else if(nativeOk()){
+      /* Safari plays HLS natively but exposes no level list, so the quality
+         control stays a readout only. */
       video.src = HLS_URL;
       video.addEventListener("loadedmetadata", function(){
         retryCount = 0; clearState(); video.play().catch(noop); showHint();
       }, {once:true});
-      video.addEventListener("error", function(){ scheduleRetry(); }, {once:true});
+      video.addEventListener("error", function(){ scheduleRetry("直播连接中断"); }, {once:true});
     } else {
-      showError();
-      stateTxt.textContent = "当前浏览器不支持该直播流";
+      showError("该浏览器既不支持 MSE，也不支持原生 HLS 播放。");
+      stateTxt.textContent = "当前浏览器无法播放此直播流";
     }
   }
 
@@ -477,7 +622,7 @@
       try{ hls.recoverMediaError(); return; }catch(e){}
     }
     destroyHls();
-    scheduleRetry();
+    scheduleRetry("直播连接中断");
   }
 
   /* ---------- Audio ---------- */
@@ -517,9 +662,13 @@
   /* ---------- Keyboard ---------- */
   document.addEventListener("keydown", function(e){
     if(e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = (e.key || "").toLowerCase();
+    if(!qMenu.hidden){
+      if(k === "escape"){ closeQMenu(); qBtn.focus(); }
+      return; // the open menu owns the keyboard
+    }
     var tag = document.activeElement ? document.activeElement.tagName : "";
     var onControl = (tag === "BUTTON" || tag === "A" || tag === "INPUT");
-    var k = (e.key || "").toLowerCase();
     if(k === " " || k === "k"){
       if(onControl && k === " ") return; // let space activate the focused control
       e.preventDefault();
@@ -530,8 +679,6 @@
       toggleFullscreen();
     } else if(k === "l"){
       jumpToLive();
-    } else if(k === "escape"){
-      closeQMenu();
     }
   });
 
@@ -547,7 +694,7 @@
   /* ---------- Telemetry rail ---------- */
   setInterval(function(){
     try{
-      statRes.textContent = video.videoWidth ? (video.videoWidth + "×" + video.videoHeight) : "—";
+      qRes.textContent = video.videoWidth ? (video.videoWidth + "×" + video.videoHeight) : "—";
       var l = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
       statRate.textContent = (l && l.bitrate) ? (Math.round(l.bitrate / 1000).toLocaleString() + " kbps") : "—";
       var lat = latency();
