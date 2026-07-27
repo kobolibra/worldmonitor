@@ -8,8 +8,67 @@
 <meta name="description" content="Bloomberg Television 官方直播流，纯净全屏播放。">
 <title>Bloomberg Live</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0c0f'/%3E%3Crect x='11' y='7' width='4.5' height='18' rx='2' fill='%23ff6a00'/%3E%3Crect x='18' y='13' width='4.5' height='12' rx='2' fill='%23ff9a4d'/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://www.bloomberg.com" crossorigin>
+
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://www.bloomberg.com" crossorigin>
+<link rel="dns-prefetch" href="https://registry.npmmirror.com">
+<link rel="dns-prefetch" href="https://unpkg.com">
+
+<!-- Player bootstrap, deliberately first.
+     The library used to be fetched from the bottom of <body>, so the request
+     could not start until the entire document had been parsed. Declaring it
+     here lets the browser's preload scanner begin the download within the first
+     few milliseconds, in parallel with CSS parsing. The multi-CDN fallback is
+     kept: the static tag below reports failure into the same chain. -->
+<script>
+(function(){
+  var MIRRORS = [
+    "https://registry.npmmirror.com/hls.js/latest/files/dist/hls.min.js",
+    "https://unpkg.com/hls.js@1/dist/hls.min.js"
+  ];
+  var TIMEOUT = 6000;
+  var i = 0, settled = false, waiters = [], timer = null;
+
+  function settle(ok){
+    if(settled) return;
+    settled = true;
+    clearTimeout(timer);
+    var pending = waiters.slice(); waiters.length = 0;
+    pending.forEach(function(fn){ try{ fn(ok); }catch(e){} });
+  }
+  function next(){
+    clearTimeout(timer);
+    if(window.Hls) return settle(true);
+    if(i >= MIRRORS.length) return settle(false);
+    var el = document.createElement("script"), done = false;
+    function fail(){
+      if(done) return;
+      done = true;
+      try{ if(el.parentNode) el.parentNode.removeChild(el); }catch(e){}
+      next();
+    }
+    timer = setTimeout(fail, TIMEOUT);
+    el.async = true;
+    el.src = MIRRORS[i++];
+    el.onload = function(){ if(done) return; done = true; clearTimeout(timer); window.Hls ? settle(true) : fail(); };
+    el.onerror = fail;
+    document.head.appendChild(el);
+  }
+
+  window.__hlsOk   = function(){ window.Hls ? settle(true) : next(); };
+  window.__hlsFail = function(){ next(); };
+  /* Resolves immediately if the library is already present. */
+  window.__hlsReady = function(cb){
+    if(window.Hls) return cb(true);
+    if(settled) return cb(false);
+    waiters.push(cb);
+  };
+  /* A blocked CDN often hangs rather than erroring, so arm a watchdog too. */
+  timer = setTimeout(function(){ if(!window.Hls) next(); }, TIMEOUT);
+})();
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js" onload="__hlsOk()" onerror="__hlsFail()"></script>
+
 <style>
   :root{
     --bg:#06070a;
@@ -44,8 +103,8 @@
     transition:background 1.6s cubic-bezier(.4,0,.2,1);
   }
   .app{position:relative; z-index:1; display:flex; flex-direction:column; height:100%;
-    animation:appIn .55s cubic-bezier(.22,.61,.36,1) both;}
-  @keyframes appIn{from{opacity:0; transform:translateY(8px);}to{opacity:1; transform:none;}}
+    animation:appIn .34s cubic-bezier(.22,.61,.36,1) both;}
+  @keyframes appIn{from{opacity:0; transform:translateY(6px);}to{opacity:1; transform:none;}}
 
   /* ---------- Header ---------- */
   .bar{
@@ -144,6 +203,7 @@
   .keys span{display:inline-flex; align-items:center; gap:5px;}
   kbd{font-family:inherit; font-size:9.5px; font-weight:600; letter-spacing:.04em; padding:2px 5px;
     border-radius:4px; border:1px solid var(--line-strong); background:rgba(255,255,255,.03); color:var(--muted);}
+  #statLat.catching{color:var(--accent-2);}
 
   /* ---------- Quality: promoted from the rail's own resolution readout ----------
      One object shows the current picture and changes it. No floating overlay,
@@ -282,7 +342,7 @@
     <span class="sep-dot m-hide" aria-hidden="true"></span>
     <span class="m-hide" id="statRate" title="根据最近几个已缓冲分片实测的平均编码码率">码率 —</span>
     <span class="sep-dot" aria-hidden="true"></span>
-    <span id="statLat">延迟 —</span>
+    <span id="statLat" title="当前画面距离直播边缘的真实时间差">延迟 —</span>
     <span class="spacer"></span>
     <span class="keys">
       <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span>
@@ -297,16 +357,6 @@
   "use strict";
 
   var HLS_URL = "https://www.bloomberg.com/media-manifest/streams/us.m3u8";
-
-  /* A single CDN is a single point of failure — especially on networks where
-     jsdelivr is slow, filtered, or silently hangs. Try each in order, with a
-     hard timeout, and only give up when every source has failed. */
-  var HLS_SOURCES = [
-    "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js",
-    "https://registry.npmmirror.com/hls.js/latest/files/dist/hls.min.js",
-    "https://unpkg.com/hls.js@1/dist/hls.min.js"
-  ];
-  var SOURCE_TIMEOUT = 6000;
 
   var video    = document.getElementById("video");
   var screenEl = document.getElementById("screen");
@@ -376,47 +426,6 @@
   }
   function retryNow(){ clearTimeout(retryTimer); clearInterval(countdownTimer); playHls(); }
   retryBtn.addEventListener("click", retryNow);
-
-  /* ---------- Player library loader ----------
-     Always attempt hls.js, even where the browser can play HLS natively:
-     the native path gives up the level list, the bitrate readout and
-     low-latency sync. Native is a fallback, not a shortcut. */
-  var libLoading = false, libWaiters = [];
-  function loadLibrary(done){
-    if(window.Hls) return done(true);
-    libWaiters.push(done);
-    if(libLoading) return;
-    libLoading = true;
-
-    var i = 0;
-    function finish(ok){
-      libLoading = false;
-      var pending = libWaiters.slice();
-      libWaiters.length = 0;
-      pending.forEach(function(fn){ try{ fn(ok); }catch(e){} });
-    }
-    (function next(){
-      if(window.Hls) return finish(true);
-      if(i >= HLS_SOURCES.length) return finish(false);
-      var el = document.createElement("script"), settled = false;
-      var timer = setTimeout(function(){ fail(); }, SOURCE_TIMEOUT);
-      function fail(){
-        if(settled) return;
-        settled = true; clearTimeout(timer);
-        try{ if(el.parentNode) el.parentNode.removeChild(el); }catch(e){}
-        next();
-      }
-      el.async = true;
-      el.src = HLS_SOURCES[i++];
-      el.onload = function(){
-        if(settled) return;
-        settled = true; clearTimeout(timer);
-        if(window.Hls) finish(true); else next();
-      };
-      el.onerror = fail;
-      document.head.appendChild(el);
-    })();
-  }
 
   /* ---------- Captions: native bottom rendering ---------- */
   function normalizeCaptions(track){
@@ -546,15 +555,24 @@
   });
   document.addEventListener("click", function(){ closeQMenu(); });
 
-  /* ---------- Live edge ---------- */
+  /* ---------- Live edge ----------
+     hls.latency is the real distance from the live edge. liveSyncPosition is
+     only our own playback target, so measuring against it reports drift, not
+     latency, and always looks flatteringly small. */
+  function targetLatency(){
+    var t = hls && hls.targetLatency;
+    return (typeof t === "number" && t > 0) ? t : 6;
+  }
+  function latency(){
+    if(hls && typeof hls.latency === "number" && hls.latency > 0) return hls.latency;
+    var b = video.buffered;
+    if(b && b.length) return Math.max(0, b.end(b.length - 1) - video.currentTime);
+    return NaN;
+  }
   function liveEdge(){
     if(hls && isFinite(hls.liveSyncPosition)) return hls.liveSyncPosition;
     var b = video.buffered;
     return (b && b.length) ? b.end(b.length - 1) : NaN;
-  }
-  function latency(){
-    var e = liveEdge();
-    return isFinite(e) ? Math.max(0, e - video.currentTime) : NaN;
   }
   function jumpToLive(){
     var e = liveEdge();
@@ -568,18 +586,17 @@
   function playHls(){
     clearTimeout(retryTimer); clearInterval(countdownTimer);
 
-    if(!window.Hls){
-      showLoading(retryCount === 0 ? "正在加载播放组件…" : "正在重新加载播放组件…");
-      loadLibrary(function(ok){
-        if(!ok && !nativeOk()){
-          scheduleRetry("播放组件加载失败", "三个镜像源都没能加载 hls.js。通常是网络受限或被广告拦截插件阻断——换个网络环境或关闭拦截插件后重试。");
-          return;
-        }
-        startPlayback();
-      });
-      return;
-    }
-    startPlayback();
+    if(window.Hls) return startPlayback();
+
+    showLoading(retryCount === 0 ? "正在加载播放组件…" : "正在重新加载播放组件…");
+    var wait = window.__hlsReady || function(cb){ cb(false); };
+    wait(function(ok){
+      if(!ok && !window.Hls && !nativeOk()){
+        scheduleRetry("播放组件加载失败", "三个镜像源都没能加载 hls.js。通常是网络受限或被广告拦截插件阻断——换个网络环境或关闭拦截插件后重试。");
+        return;
+      }
+      startPlayback();
+    });
   }
 
   function startPlayback(){
@@ -589,15 +606,37 @@
     resetQuality();
     measuredBps = 0;
     video.muted = true;
+    try{ video.playbackRate = 1; }catch(e){}
     screenEl.classList.add("mutedState");
 
     if(window.Hls && window.Hls.isSupported()){
       hls = new window.Hls({
         enableWorker: true,
         lowLatencyMode: true,
+        backBufferLength: 30,
+
+        /* Live sync. maxLiveSyncPlaybackRate lets the player absorb drift by
+           running imperceptibly fast, instead of letting it pile up until a
+           hard seek is needed — a seek is audible, a 1.05x nudge is not. */
         liveSyncDurationCount: 2,
         liveMaxLatencyDurationCount: 6,
-        backBufferLength: 60
+        maxLiveSyncPlaybackRate: 1.3,
+        liveDurationInfinity: true,
+
+        /* Startup. The default bandwidth estimate is 0.5 Mbps, which makes the
+           very first level pick land near the bottom of the ladder and take
+           several fragments to climb. Seed it realistically and skip the
+           deliberate probe fragment. */
+        abrEwmaDefaultEstimate: 2500000,
+        testBandwidth: false,
+        startFragPrefetch: true,
+
+        /* Fail fast so the retry ladder can act, rather than hanging. */
+        manifestLoadingTimeOut: 8000,
+        manifestLoadingMaxRetry: 2,
+        manifestLoadingRetryDelay: 500,
+        levelLoadingTimeOut: 8000,
+        fragLoadingTimeOut: 12000
       });
       hls.loadSource(HLS_URL);
       hls.attachMedia(video);
@@ -718,8 +757,10 @@
   document.addEventListener("visibilitychange", function(){
     if(document.hidden) return;
     if(!hls && !retryTimer) return;
+    /* Coming back from a background tab, the gap is usually far larger than
+       the rate controller can absorb, so seek rather than crawl forward. */
     var l = latency();
-    if(isFinite(l) && l > 15) jumpToLive();
+    if(isFinite(l) && l > targetLatency() + 10) jumpToLive();
   });
   window.addEventListener("online", function(){ if(!hls) retryNow(); });
 
@@ -732,9 +773,13 @@
       // value until the first fragment has been measured.
       var shown = measuredBps || (lvl && lvl.bitrate) || 0;
       statRate.textContent = "码率 " + (shown ? (Math.round(shown / 1000).toLocaleString() + " kbps") : "—");
+
       var lat = latency();
       statLat.textContent = "延迟 " + (isFinite(lat) ? (lat.toFixed(1) + "s") : "—");
-      var behind = isFinite(lat) && lat > 12 && !video.paused;
+      // Tint the readout while the player is quietly catching up.
+      statLat.classList.toggle("catching", video.playbackRate > 1.01);
+
+      var behind = isFinite(lat) && lat > targetLatency() + 8 && !video.paused;
       liveBtn.classList.toggle("behind", behind);
       liveTxt.textContent = behind ? "回到直播" : "LIVE";
     }catch(e){}
