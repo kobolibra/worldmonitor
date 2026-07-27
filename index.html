@@ -353,7 +353,7 @@
       <div class="q-pop" id="qMenu" role="listbox" aria-label="画质" hidden>
         <div class="q-head"><b>画质</b><span id="qSrc">自适应</span></div>
         <div class="q-list" id="qList"></div>
-        <div class="q-foot" id="qFoot" hidden>已锁定该档位，不会随带宽波动乱跳。只有当缓冲即将耗尽时才临时降一档，稳定后自动升回。</div>
+        <div class="q-foot" id="qFoot" hidden>已锁定该档位，不会随带宽波动乱跳。只有当缓冲持续快耗尽时才会临时降一档（仅一档，不低于 720p），稳定后自动升回。</div>
       </div>
     </div>
 
@@ -449,14 +449,18 @@
   var measuredBps = 0;   // EWMA of the real encoded bitrate
   var heightIndex = {};  // picture height -> the level index the menu offers
 
-  /* Quality state. lockedIdx is what you asked for and is never touched by
-     the guard; fallbackIdx is a temporary detour the guard is currently
-     enforcing. Keeping them separate is what lets the choice survive a rough
+  /* ---------- Quality state ----------
+     lockedIdx is what you asked for and nothing but an explicit pick ever
+     changes it. fallbackIdx is a single temporary detour the guard may be
+     enforcing. Keeping them apart is what lets the choice survive a rough
      patch instead of being quietly rewritten by it. */
   var lockedIdx = -1;    // -1 = auto
   var fallbackIdx = -1;  // -1 = no detour in force
   var thinTicks = 0, healthyTicks = 0;
-  var THIN_SECS = 2.5, THIN_HOLD = 4, HEALTHY_SECS = 8, HEALTHY_HOLD = 45;
+  var guardHoldUntil = 0;      // guard sleeps until this timestamp
+  var THIN_SECS = 2.5, THIN_HOLD = 6, HEALTHY_SECS = 8, HEALTHY_HOLD = 45;
+  var GUARD_COOLDOWN = 20000;  // ms of silence after any switch
+  var GUARD_FLOOR = 720;       // the guard may never drop below this height
 
   function noop(){}
   function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
@@ -610,7 +614,7 @@
     qList.innerHTML = "";
     heightIndex = {};
     lockedIdx = -1; fallbackIdx = -1;
-    thinTicks = 0; healthyTicks = 0;
+    thinTicks = 0; healthyTicks = 0; guardHoldUntil = 0;
     qBtn.disabled = true;
     qBtn.classList.remove("degraded");
     qBtn.title = "选择画质";
@@ -660,14 +664,13 @@
      An earlier revision routed the choice through autoLevelCapping so ABR
      could still override it. That cured the stalling by making the menu
      meaningless — you could select 1080p and simply keep watching 720p.
-     The lock is back; what keeps it from stalling is guardTick() below,
-     which steps down only on demonstrated starvation and steps back up on
-     its own. */
+     The lock is back; guardTick() below is what keeps it from stalling. */
   function applyLevel(idx){
     if(!hls) return;
     lockedIdx = idx;
     fallbackIdx = -1;
     thinTicks = 0; healthyTicks = 0;
+    guardHoldUntil = Date.now() + GUARD_COOLDOWN;
     qBtn.classList.remove("degraded");
     try{
       hls.autoLevelCapping = -1;
@@ -677,48 +680,67 @@
   }
   /* The next rung down among the ones the menu actually offers, so the guard
      and the menu never disagree about which index represents a height. */
-  function nextLowerIndex(cur){
-    if(!hls || !hls.levels[cur]) return -1;
-    var curH = hls.levels[cur].height || 0;
+  function nextLowerIndex(from){
+    if(!hls || !hls.levels[from]) return -1;
+    var fromH = hls.levels[from].height || 0;
     var heights = Object.keys(heightIndex).map(Number).sort(function(a, b){ return b - a; });
     for(var i = 0; i < heights.length; i++){
-      if(heights[i] < curH) return heightIndex[heights[i]];
+      if(heights[i] < fromH) return heightIndex[heights[i]];
     }
     return -1;
   }
-  /* Buffer ahead of the playhead is the only signal that actually predicts a
-     stall — bandwidth estimates lag, and latency says nothing about whether
-     the next fragment will arrive in time. Both thresholds are held for
-     several consecutive seconds so a single slow segment cannot demote the
-     picture, and a brief calm cannot promote it back into another stall. */
+
+  /* ---------- Stall guard ----------
+     Buffer ahead of the playhead is the only signal that actually predicts a
+     stall: bandwidth estimates lag, and latency says nothing about whether
+     the next fragment will arrive in time.
+
+     The hard-won rule here is that switching level *empties the buffer* and
+     refills it, so the reading taken right after a switch describes the
+     switch, not the network. An earlier version ignored that, read its own
+     after-effect as fresh starvation, and walked 1080p down to 272p four
+     seconds at a time on a link that streams 720p perfectly well. Hence:
+
+       - Any switch buys 20 seconds of silence before judging again.
+       - The guard has exactly ONE move: one rung below the locked rung.
+         Never a second step, never below 720p, and recovery goes straight
+         back to the lock. Cascading is structurally impossible, not merely
+         discouraged.
+       - Startup is not a symptom. It waits for the connecting overlay to
+         clear and for the decoder to actually have playable data. */
   function guardTick(){
     if(!hls || lockedIdx < 0 || video.paused) return;
+    if(!stateEl.hidden || video.readyState < 3) return;
+    if(Date.now() < guardHoldUntil) return;
+
     var buf = bufferAhead();
     if(!isFinite(buf)) return;
-    var cur = (fallbackIdx >= 0) ? fallbackIdx : lockedIdx;
 
-    if(buf < THIN_SECS){
-      healthyTicks = 0;
+    if(fallbackIdx < 0){
+      // Holding the locked rung: is it demonstrably unsustainable?
+      if(buf >= THIN_SECS){ thinTicks = 0; return; }
       if(++thinTicks < THIN_HOLD) return;
       thinTicks = 0;
-      var lower = nextLowerIndex(cur);
-      if(lower < 0) return;           // already at the bottom rung
+      var lower = nextLowerIndex(lockedIdx);
+      if(lower < 0) return;                                   // already lowest
+      if((hls.levels[lower].height || 0) < GUARD_FLOOR) return; // below the floor
       fallbackIdx = lower;
       measuredBps = 0;
+      guardHoldUntil = Date.now() + GUARD_COOLDOWN;
       try{ hls.currentLevel = lower; }catch(e){}
       qBtn.classList.add("degraded");
       updateActiveRate();
-    } else if(buf > HEALTHY_SECS && fallbackIdx >= 0){
-      thinTicks = 0;
+    } else {
+      // On the detour: has it been comfortable long enough to go back?
+      if(buf <= HEALTHY_SECS){ healthyTicks = 0; return; }
       if(++healthyTicks < HEALTHY_HOLD) return;
       healthyTicks = 0;
       fallbackIdx = -1;
       measuredBps = 0;
+      guardHoldUntil = Date.now() + GUARD_COOLDOWN;
       try{ hls.currentLevel = lockedIdx; }catch(e){}
       qBtn.classList.remove("degraded");
       updateActiveRate();
-    } else {
-      thinTicks = 0;
     }
   }
 
@@ -765,7 +787,9 @@
     updateActiveRate();
   }
   /* The selected row states the request; this states what is on screen right
-     now, so a guard detour is visible rather than mysterious. */
+     now, so a guard detour is visible rather than mysterious. It reports a
+     detour only when the guard is actually holding one — never because the
+     decoder is a moment behind the switch. */
   function updateActiveRate(){
     var row = qList.querySelector('.q-item[aria-selected="true"]');
     if(!row) return;
@@ -778,9 +802,10 @@
       return;
     }
     var want = hls && hls.levels[parseInt(row.dataset.level, 10)];
-    var detoured = (fallbackIdx >= 0 && lv && want && lv.height !== want.height);
-    cell.classList.toggle("warn", !!detoured);
-    cell.textContent = detoured ? ("临时降至 " + levelLabel(lv)) : rateLabel(want && want.bitrate);
+    var held = (fallbackIdx >= 0) ? (hls && hls.levels[fallbackIdx]) : null;
+    var detoured = !!(held && want && held.height !== want.height);
+    cell.classList.toggle("warn", detoured);
+    cell.textContent = detoured ? ("临时降至 " + levelLabel(held)) : rateLabel(want && want.bitrate);
   }
 
   /* ---------- Live edge ----------
@@ -1027,9 +1052,10 @@
     if(!hls && !retryTimer) return;
     /* Coming back from a background tab, the gap is usually far larger than
        the rate controller can absorb, so seek rather than crawl forward.
-       Reset the guard too: a backgrounded tab starves the buffer for reasons
-       that say nothing about the connection. */
+       Silence the guard as well: a backgrounded tab starves the buffer for
+       reasons that say nothing about the connection. */
     thinTicks = 0; healthyTicks = 0;
+    guardHoldUntil = Date.now() + GUARD_COOLDOWN;
     var l = latency();
     if(isFinite(l) && l > targetLatency() + 10) jumpToLive();
   });
