@@ -280,7 +280,7 @@
     </div>
 
     <span class="sep-dot m-hide" aria-hidden="true"></span>
-    <span class="m-hide" id="statRate">码率 —</span>
+    <span class="m-hide" id="statRate" title="根据最近几个已缓冲分片实测的平均编码码率">码率 —</span>
     <span class="sep-dot" aria-hidden="true"></span>
     <span id="statLat">延迟 —</span>
     <span class="spacer"></span>
@@ -331,6 +331,7 @@
   var hls = null;
   var retryTimer = null, countdownTimer = null;
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
+  var measuredBps = 0; // EWMA of the real encoded bitrate
 
   function noop(){}
   function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
@@ -482,6 +483,7 @@
         e.stopPropagation();
         var v = btn.dataset.level;
         hls.currentLevel = (v === "auto") ? -1 : parseInt(v, 10);
+        measuredBps = 0; // the ladder changed; start the average over
         setActiveQuality(v);
         closeQMenu();
         qBtn.focus();
@@ -585,6 +587,7 @@
     showLoading(retryCount === 0 ? "正在连接 Bloomberg 官方直播…" : "正在重新连接…");
     destroyHls();
     resetQuality();
+    measuredBps = 0;
     video.muted = true;
     screenEl.classList.add("mutedState");
 
@@ -604,8 +607,20 @@
         video.play().catch(noop);
         showHint();
       });
-      hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){ updateAutoLabel(); });
-      hls.on(window.Hls.Events.FRAG_BUFFERED, function(){ netRecovery = 0; mediaRecovery = 0; });
+      hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){ measuredBps = 0; updateAutoLabel(); });
+      hls.on(window.Hls.Events.FRAG_BUFFERED, function(_e, d){
+        netRecovery = 0; mediaRecovery = 0;
+        /* Real encoded bitrate: bytes actually delivered for this fragment,
+           divided by the media time it covers. Smoothed so it reads steadily. */
+        try{
+          var st = d && d.stats, dur = d && d.frag && d.frag.duration;
+          var bytes = st ? (st.total || st.loaded) : 0;
+          if(bytes > 0 && dur > 0){
+            var bps = bytes * 8 / dur;
+            measuredBps = measuredBps ? (measuredBps * 0.7 + bps * 0.3) : bps;
+          }
+        }catch(e){}
+      });
       hls.on(window.Hls.Events.ERROR, onHlsError);
     } else if(nativeOk()){
       /* Fallback only: the system decoder exposes no level list, so the control
@@ -712,8 +727,11 @@
   setInterval(function(){
     try{
       qRes.textContent = video.videoWidth ? (video.videoWidth + "×" + video.videoHeight) : "—";
-      var l = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
-      statRate.textContent = "码率 " + ((l && l.bitrate) ? (Math.round(l.bitrate / 1000).toLocaleString() + " kbps") : "—");
+      var lvl = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
+      // Prefer what is actually arriving; fall back to the manifest's declared
+      // value until the first fragment has been measured.
+      var shown = measuredBps || (lvl && lvl.bitrate) || 0;
+      statRate.textContent = "码率 " + (shown ? (Math.round(shown / 1000).toLocaleString() + " kbps") : "—");
       var lat = latency();
       statLat.textContent = "延迟 " + (isFinite(lat) ? (lat.toFixed(1) + "s") : "—");
       var behind = isFinite(lat) && lat > 12 && !video.paused;
