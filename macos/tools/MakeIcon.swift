@@ -2,10 +2,14 @@ import Cocoa
 
 // Draws the launcher icon at every size macOS asks for, so the repository does
 // not have to carry binary image assets that nobody can review in a diff.
+//
+// The mark is a capital B built from two D shaped bowls sharing a stem, with
+// the counters punched back out in the plate colour. The geometry is written in
+// the same 108 unit grid the Android adaptive icon uses, so the two platforms
+// ship the identical shape.
 
 let iconBackground = NSColor(srgbRed: 0x0A / 255.0, green: 0x0C / 255.0, blue: 0x0F / 255.0, alpha: 1)
-let barPrimary = NSColor(srgbRed: 1.0, green: 0x6A / 255.0, blue: 0.0, alpha: 1)
-let barSecondary = NSColor(srgbRed: 1.0, green: 0x9A / 255.0, blue: 0x4D / 255.0, alpha: 1)
+let markColor = NSColor.white
 
 func renderPNG(pixels: Int) -> Data? {
 	guard
@@ -34,23 +38,37 @@ func renderPNG(pixels: Int) -> Data? {
 
 	// macOS icons sit inside the canvas rather than filling it.
 	let inset: CGFloat = 100 * u
-	let plate = NSRect(
-		x: inset, y: inset,
-		width: CGFloat(pixels) - inset * 2,
-		height: CGFloat(pixels) - inset * 2)
+	let plateSide = CGFloat(pixels) - inset * 2
+	let plate = NSRect(x: inset, y: inset, width: plateSide, height: plateSide)
 	iconBackground.setFill()
 	NSBezierPath(roundedRect: plate, xRadius: 185 * u, yRadius: 185 * u).fill()
 
-	func bar(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, color: NSColor) {
-		let r: CGFloat = 58 * u
-		let rect = NSRect(x: x * u, y: y * u, width: w * u, height: h * u)
-		color.setFill()
-		NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill()
+	// Map the shared 108 unit grid onto the plate. The design grid runs top
+	// down; AppKit runs bottom up, so y is flipped here and nowhere else.
+	let s = plateSide / 108.0
+	func gx(_ v: CGFloat) -> CGFloat { inset + v * s }
+	func gy(_ v: CGFloat) -> CGFloat { inset + (108 - v) * s }
+
+	// A flat left edge with a semicircular right edge, in design coordinates.
+	func bowl(left: CGFloat, top: CGFloat, flatRight: CGFloat, bottom: CGFloat) -> NSBezierPath {
+		let path = NSBezierPath()
+		let radius = (bottom - top) / 2 * s
+		let centre = NSPoint(x: gx(flatRight), y: gy((top + bottom) / 2))
+		path.move(to: NSPoint(x: gx(left), y: gy(bottom)))
+		path.line(to: NSPoint(x: gx(flatRight), y: gy(bottom)))
+		path.appendArc(withCenter: centre, radius: radius, startAngle: -90, endAngle: 90)
+		path.line(to: NSPoint(x: gx(left), y: gy(top)))
+		path.close()
+		return path
 	}
 
-	// Two bars on a common baseline, echoing the page's own mark.
-	bar(x: 328, y: 224, w: 144, h: 576, color: barPrimary)
-	bar(x: 552, y: 224, w: 144, h: 384, color: barSecondary)
+	markColor.setFill()
+	bowl(left: 35.5, top: 26, flatRight: 54.5, bottom: 52).fill()
+	bowl(left: 35.5, top: 52, flatRight: 57.5, bottom: 82).fill()
+
+	iconBackground.setFill()
+	bowl(left: 45.5, top: 34, flatRight: 54.5, bottom: 44).fill()
+	bowl(left: 45.5, top: 60, flatRight: 57.5, bottom: 74).fill()
 
 	return rep.representation(using: .png, properties: [:])
 }
