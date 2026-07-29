@@ -904,7 +904,7 @@
      latency, and always looks flatteringly small. */
   function targetLatency(){
     var t = hls && hls.targetLatency;
-    return (typeof t === "number" && t > 0) ? t : 12;
+    return (typeof t === "number" && t > 0) ? t : 20;
   }
   function latency(){
     if(hls && typeof hls.latency === "number" && hls.latency > 0) return hls.latency;
@@ -965,36 +965,53 @@
     if(window.Hls && window.Hls.isSupported()){
       hls = new window.Hls({
         enableWorker: true,
-        backBufferLength: 30,
 
-        /* Live sync.
-           This playlist carries no LL-HLS parts, so lowLatencyMode bought
-           nothing except a playhead pinned closer to the edge — which is
-           precisely where there is no cushion left to absorb a slow segment.
-           Three fragments back is hls.js's own default and the smallest
-           cushion that survives one late delivery on a long path. */
+        /* Media behind the playhead occupies the same SourceBuffer quota as
+           media ahead of it, and that quota is far smaller inside an embedded
+           WebView than in a desktop browser. Keeping less history leaves more
+           room for the only part that can prevent a stall. */
+        backBufferLength: 15,
+
+        /* Live sync, deliberately conservative.
+
+           The measurement that drove this: 1.7s of buffer against 11.5s of
+           latency. Those two numbers together mean roughly ten seconds of
+           already-published media had not been fetched yet — delivery was
+           only just keeping pace with playback, with no reserve at all, so
+           every hiccup landed straight on the picture.
+
+           This playlist carries no LL-HLS parts, so there was never anything
+           to win by sitting close to the edge. Six fragments back is the same
+           broadcast a few seconds later with several times the room to absorb
+           a late segment. */
         lowLatencyMode: false,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 12,
-        /* Catch up gently. At 1.3x the player consumes buffer half again as
-           fast as it arrives, so drift recovery was itself causing stalls. */
-        maxLiveSyncPlaybackRate: 1.08,
+        liveSyncDurationCount: 6,
+        liveMaxLatencyDurationCount: 20,
+
+        /* Never speed up to chase the edge. Catching up spends exactly the
+           cushion this change exists to build, and on a tunnelled link the
+           player loses that race more often than it wins it. */
+        maxLiveSyncPlaybackRate: 1,
         liveDurationInfinity: true,
 
-        /* Buffer as far ahead as the live edge allows. */
-        maxBufferLength: 30,
-        maxMaxBufferLength: 120,
+        /* Buffer well ahead, without asking the WebView for a quota it will
+           refuse and then evict its way out of. */
+        maxBufferLength: 40,
+        maxMaxBufferLength: 60,
         maxBufferHole: 0.5,
         nudgeMaxRetry: 10,
 
-        /* No ABR overrides. A previous revision seeded the bandwidth estimate
-           at 2.5 Mbps and disabled the startup probe, which told the player to
-           open near the top of the ladder before it had measured anything.
-           Over a tunnelled connection that assumption is wrong in the
-           expensive direction: it opens too high, starves, and stalls. The
-           library's own conservative default starts low and climbs on
-           evidence, which is the correct behaviour on a link whose capacity
-           is unknown and variable. */
+        /* ABR, biased towards holding a picture rather than maximising one.
+           An earlier revision seeded the estimate at 2.5 Mbps and skipped the
+           startup probe, so the player opened near the top of the ladder
+           before it had measured anything; over a tunnel that is wrong in the
+           expensive direction. These three lean the other way: start low, and
+           demand real headroom before climbing a rung. They only bias the
+           library's own decision — an explicit pick still overrides them
+           completely. */
+        abrEwmaDefaultEstimate: 600000,
+        abrBandWidthFactor: 0.8,
+        abrBandWidthUpFactor: 0.5,
         startFragPrefetch: true,
 
         /* Retry a slow segment rather than tearing the session down: on a long
