@@ -206,11 +206,12 @@
 
   .clocks{margin-left:auto; display:flex; align-items:flex-start; gap:clamp(14px,2vw,26px);}
   .clock{display:flex; flex-direction:column; gap:3px; align-items:flex-end;}
+  .clock[hidden]{display:none;}
   .clock .tz{font-size:9.5px; font-weight:600; letter-spacing:.16em; color:var(--faint); white-space:nowrap;}
   .clock time{font-size:14px; font-weight:500; letter-spacing:.02em; color:var(--text);
     font-variant-numeric:tabular-nums; line-height:1.1;}
   .session{font-size:9.5px; font-weight:700; letter-spacing:.1em; padding:1px 6px; border-radius:4px;
-    border:1px solid transparent;}
+    border:1px solid transparent; white-space:nowrap;}
   .session.on{color:#73e6a9; background:rgba(39,209,124,.1); border-color:rgba(39,209,124,.26);}
   .session.pre{color:var(--accent-2); background:rgba(255,106,0,.1); border-color:rgba(255,106,0,.26);}
   .session.off{color:var(--faint); background:rgba(255,255,255,.04); border-color:var(--line);}
@@ -331,8 +332,16 @@
   .noscript{position:fixed; inset:0; z-index:99; display:flex; align-items:center; justify-content:center;
     background:var(--bg); color:var(--muted); font-size:14px; text-align:center; padding:24px;}
 
-  @media (max-width:900px){
+  @media (max-width:1080px){
+    /* Three columns plus the key legend is more than the bar can hold on a
+       laptop in a small window. The legend goes first: it is a reminder, not
+       information. */
     .keys{display:none;}
+  }
+  @media (max-width:760px){
+    /* London is the first column to go, because the feed itself is anchored to
+       the New York session and the local column is the viewer's own. */
+    #clockLondon{display:none;}
   }
   @media (max-width:680px){
     .bar{padding:12px var(--pad-x); gap:10px;}
@@ -340,6 +349,7 @@
     .clocks{gap:14px;}
     .clock .tz{font-size:9px;}
     .clock time{font-size:12.5px;}
+    .session{font-size:9px; padding:1px 5px;}
     .rail .m-hide{display:none;}
     .hint{bottom:46px;}
   }
@@ -363,14 +373,20 @@
       <span class="dot" aria-hidden="true"></span><span id="liveTxt">LIVE</span>
     </button>
     <div class="clocks">
-      <div class="clock">
+      <div class="clock" id="clockLondon">
+        <span class="tz">LONDON</span>
+        <time id="londonTime">--:--:--</time>
+        <span class="session off" id="londonSession">—</span>
+      </div>
+      <div class="clock" id="clockNy">
         <span class="tz">NEW YORK</span>
         <time id="nyTime">--:--:--</time>
         <span class="session off" id="session">—</span>
       </div>
-      <div class="clock">
+      <div class="clock" id="clockLocal">
         <span class="tz" id="localTz">LOCAL</span>
         <time id="localTime">--:--:--</time>
+        <span class="session off" id="localSession">—</span>
       </div>
     </div>
   </header>
@@ -430,7 +446,7 @@
     <span id="statLat" title="当前画面距离直播边缘的真实时间差">延迟 —</span>
     <span class="spacer"></span>
     <span class="keys">
-      <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span><span><kbd>S</kbd>信号源</span>
+      <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span><span><kbd>S</kbd>切换信号源</span>
     </span>
   </footer>
 </div>
@@ -1204,43 +1220,122 @@
     }catch(e){}
   }, 1000);
 
-  /* ---------- Clocks ---------- */
-  var nyTime = document.getElementById("nyTime");
-  var localTime = document.getElementById("localTime");
-  var sessionEl = document.getElementById("session");
-  var nyFmt, localFmt, partsFmt;
-  try{
-    nyFmt = new Intl.DateTimeFormat("en-GB", {timeZone:"America/New_York", hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
-    localFmt = new Intl.DateTimeFormat("en-GB", {hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
-    partsFmt = new Intl.DateTimeFormat("en-US", {timeZone:"America/New_York", weekday:"short", hour:"2-digit", minute:"2-digit", hourCycle:"h23"});
-    var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-    if(tz) document.getElementById("localTz").textContent = tz.split("/").pop().replace(/_/g, " ").toUpperCase();
-  }catch(e){}
+  /* ---------- Clocks ----------
+     Three columns: London, New York, and wherever the viewer happens to be.
+     Every column carries the same two lines, the time and what its market is
+     doing, because a status that appears under one city and not the others
+     reads as a bug rather than as a decision.
 
-  /* Session is derived from New York wall-clock time only; market holidays
-     are not modelled, so a holiday still reads as an open session. */
-  function nySession(){
-    var p = partsFmt.formatToParts(new Date()), o = {};
-    p.forEach(function(x){ o[x.type] = x.value; });
-    var wd = o.weekday;
-    var mins = (parseInt(o.hour, 10) % 24) * 60 + parseInt(o.minute, 10);
-    if(wd === "Sat" || wd === "Sun") return {t:"周末休市", c:"off"};
-    if(mins >= 570 && mins < 960)  return {t:"开市",   c:"on"};
-    if(mins >= 240 && mins < 570)  return {t:"盘前",   c:"pre"};
-    if(mins >= 960 && mins < 1200) return {t:"盘后",   c:"pre"};
+     A session is a set of wall-clock windows expressed in the market's own
+     timezone, so the arithmetic never has to know about offsets or daylight
+     saving: Intl reports the local hour in that zone and the windows are
+     compared against it directly.
+
+     Holidays are not modelled. A public holiday still reads as an open
+     session, which is the one honest limitation here. */
+  var MARKETS = [
+    {name:"NYSE",  zone:"America/New_York",
+     zones:["America/New_York","America/Toronto","America/Detroit","America/Chicago","America/Denver","America/Phoenix","America/Los_Angeles","America/Vancouver"],
+     pre:[240,570], open:[[570,960]], post:[960,1200]},
+    {name:"LSE",   zone:"Europe/London", zones:["Europe/London","Europe/Dublin","Europe/Lisbon"],
+     pre:[420,480], open:[[480,990]], post:[990,1035]},
+    {name:"XETRA", zone:"Europe/Berlin",
+     zones:["Europe/Berlin","Europe/Paris","Europe/Amsterdam","Europe/Brussels","Europe/Madrid","Europe/Rome","Europe/Zurich","Europe/Vienna","Europe/Stockholm","Europe/Oslo","Europe/Copenhagen","Europe/Helsinki","Europe/Warsaw","Europe/Prague","Europe/Budapest","Europe/Athens"],
+     pre:[480,540], open:[[540,1050]], post:[1050,1110]},
+    {name:"SSE",   zone:"Asia/Shanghai", zones:["Asia/Shanghai","Asia/Chongqing","Asia/Chungking","Asia/Harbin","Asia/Urumqi"],
+     pre:[555,570], open:[[570,690],[780,900]], post:[900,930]},
+    {name:"HKEX",  zone:"Asia/Hong_Kong", zones:["Asia/Hong_Kong","Asia/Macau"],
+     pre:[540,570], open:[[570,720],[780,960]], post:[960,975]},
+    {name:"TWSE",  zone:"Asia/Taipei", zones:["Asia/Taipei"], pre:[510,540], open:[[540,810]], post:null},
+    {name:"TSE",   zone:"Asia/Tokyo", zones:["Asia/Tokyo"], pre:[480,540], open:[[540,690],[750,930]], post:null},
+    {name:"KRX",   zone:"Asia/Seoul", zones:["Asia/Seoul"], pre:[480,540], open:[[540,930]], post:[930,1080]},
+    {name:"SGX",   zone:"Asia/Singapore", zones:["Asia/Singapore","Asia/Kuala_Lumpur"], pre:[480,540], open:[[540,1020]], post:null},
+    {name:"NSE",   zone:"Asia/Kolkata", zones:["Asia/Kolkata","Asia/Calcutta"], pre:[540,555], open:[[555,930]], post:null},
+    {name:"DFM",   zone:"Asia/Dubai", zones:["Asia/Dubai"], pre:[570,600], open:[[600,870]], post:null},
+    {name:"ASX",   zone:"Australia/Sydney",
+     zones:["Australia/Sydney","Australia/Melbourne","Australia/Brisbane","Australia/Hobart","Australia/Canberra","Pacific/Auckland"],
+     pre:[420,600], open:[[600,960]], post:[960,1020]}
+  ];
+  function marketFor(zone){
+    if(!zone) return null;
+    for(var i = 0; i < MARKETS.length; i++){
+      if(MARKETS[i].zones.indexOf(zone) >= 0) return MARKETS[i];
+    }
+    return null;
+  }
+
+  /* One formatter per zone, built once and reused: constructing an Intl
+     formatter is far from free and this runs every second. */
+  var partsFmts = {};
+  function zoneNow(zone){
+    var f = partsFmts[zone];
+    if(!f){
+      f = new Intl.DateTimeFormat("en-US", {timeZone:zone, weekday:"short", hour:"2-digit", minute:"2-digit", hourCycle:"h23"});
+      partsFmts[zone] = f;
+    }
+    var o = {};
+    f.formatToParts(new Date()).forEach(function(x){ o[x.type] = x.value; });
+    return {wd:o.weekday, mins:(parseInt(o.hour, 10) % 24) * 60 + parseInt(o.minute, 10)};
+  }
+  function within(win, m){ return !!win && m >= win[0] && m < win[1]; }
+  function sessionOf(mkt){
+    if(!mkt) return {t:"—", c:"off"};
+    var p = zoneNow(mkt.zone), m = p.mins, i;
+    if(p.wd === "Sat" || p.wd === "Sun") return {t:"周末休市", c:"off"};
+    for(i = 0; i < mkt.open.length; i++){ if(within(mkt.open[i], m)) return {t:"开市", c:"on"}; }
+    /* The gap between two trading segments is a lunch break, not a close. */
+    if(mkt.open.length > 1 && m >= mkt.open[0][1] && m < mkt.open[1][0]) return {t:"午间休市", c:"off"};
+    if(within(mkt.pre, m))  return {t:"盘前", c:"pre"};
+    if(within(mkt.post, m)) return {t:"盘后", c:"pre"};
     return {t:"休市", c:"off"};
   }
-  function tickClocks(){
+
+  var localZone = "";
+  try{ localZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; }catch(e){}
+
+  var COLUMNS = [
+    {zone:"Europe/London",    wrap:"clockLondon", time:"londonTime", sess:"londonSession"},
+    {zone:"America/New_York", wrap:"clockNy",     time:"nyTime",     sess:"session"},
+    {zone:localZone,          wrap:"clockLocal",  time:"localTime",  sess:"localSession", local:true}
+  ];
+  COLUMNS.forEach(function(c){
+    c.wrapEl = document.getElementById(c.wrap);
+    c.timeEl = document.getElementById(c.time);
+    c.sessEl = document.getElementById(c.sess);
+    c.market = marketFor(c.zone);
     try{
-      var now = new Date();
-      if(nyFmt) nyTime.textContent = nyFmt.format(now);
-      if(localFmt) localTime.textContent = localFmt.format(now);
-      if(partsFmt){
-        var s = nySession();
-        sessionEl.textContent = s.t;
-        sessionEl.className = "session " + s.c;
-      }
-    }catch(e){}
+      c.fmt = new Intl.DateTimeFormat("en-GB", c.zone
+        ? {timeZone:c.zone, hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"}
+        : {hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
+    }catch(e){ c.fmt = null; }
+  });
+
+  /* Showing the viewer's own zone twice would be noise, so the third column
+     stands down when it would only repeat one of the first two. */
+  (function(){
+    var col = COLUMNS[2];
+    if(!col.wrapEl) return;
+    if(!localZone || localZone === "Europe/London" || localZone === "America/New_York"){
+      col.wrapEl.hidden = true;
+      return;
+    }
+    var label = document.getElementById("localTz");
+    if(label) label.textContent = localZone.split("/").pop().replace(/_/g, " ").toUpperCase();
+  })();
+
+  function tickClocks(){
+    var now = new Date();
+    COLUMNS.forEach(function(c){
+      try{
+        if(!c.wrapEl || c.wrapEl.hidden) return;
+        if(c.fmt && c.timeEl) c.timeEl.textContent = c.fmt.format(now);
+        if(c.sessEl){
+          var s = sessionOf(c.market);
+          c.sessEl.textContent = s.t;
+          c.sessEl.className = "session " + s.c;
+        }
+      }catch(e){}
+    });
   }
   tickClocks();
   setInterval(tickClocks, 1000);
