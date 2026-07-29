@@ -204,7 +204,8 @@
   .live.behind .dot{background:var(--accent); animation:none;}
   .live.behind:hover{background:rgba(255,106,0,.18);}
 
-  .clocks{margin-left:auto; display:flex; align-items:flex-start; gap:clamp(14px,2vw,26px);}
+  /* Five columns is a lot of header, so the gap tightens as the row grows. */
+  .clocks{margin-left:auto; display:flex; align-items:flex-start; gap:clamp(11px,1.5vw,22px);}
   .clock{display:flex; flex-direction:column; gap:3px; align-items:flex-end;}
   .clock[hidden]{display:none;}
   .clock .tz{font-size:9.5px; font-weight:600; letter-spacing:.16em; color:var(--faint); white-space:nowrap;}
@@ -332,17 +333,16 @@
   .noscript{position:fixed; inset:0; z-index:99; display:flex; align-items:center; justify-content:center;
     background:var(--bg); color:var(--muted); font-size:14px; text-align:center; padding:24px;}
 
-  @media (max-width:1080px){
-    /* Three columns plus the key legend is more than the bar can hold on a
-       laptop in a small window. The legend goes first: it is a reminder, not
-       information. */
+  /* Five clocks will not fit forever, so they retire in a deliberate order.
+     The two that always stay are New York, because the feed itself is anchored
+     to that session, and the local column, because it is the viewer's own. */
+  @media (max-width:1240px){
+    /* A key legend is a reminder, not information. It goes first. */
     .keys{display:none;}
   }
-  @media (max-width:760px){
-    /* London is the first column to go, because the feed itself is anchored to
-       the New York session and the local column is the viewer's own. */
-    #clockLondon{display:none;}
-  }
+  @media (max-width:1040px){ #clockSeoul{display:none;} }
+  @media (max-width:900px){ #clockLondon{display:none;} }
+  @media (max-width:760px){ #clockHk{display:none;} }
   @media (max-width:680px){
     .bar{padding:12px var(--pad-x); gap:10px;}
     .sep,.sub{display:none;}
@@ -372,8 +372,8 @@
     <button class="live" id="liveBtn" type="button" title="回到直播边缘（L）">
       <span class="dot" aria-hidden="true"></span><span id="liveTxt">LIVE</span>
     </button>
-    <!-- The three columns are ordered at runtime by real UTC offset, so the
-         source order here is not the display order. -->
+    <!-- The columns are ordered at runtime by real UTC offset, so the source
+         order here is not the display order. -->
     <div class="clocks">
       <div class="clock" id="clockLondon">
         <span class="tz">LONDON</span>
@@ -384,6 +384,16 @@
         <span class="tz">NEW YORK</span>
         <time id="nyTime">--:--:--</time>
         <span class="session off" id="session">—</span>
+      </div>
+      <div class="clock" id="clockHk">
+        <span class="tz">HONG KONG</span>
+        <time id="hkTime">--:--:--</time>
+        <span class="session off" id="hkSession">—</span>
+      </div>
+      <div class="clock" id="clockSeoul">
+        <span class="tz">SEOUL</span>
+        <time id="seoulTime">--:--:--</time>
+        <span class="session off" id="seoulSession">—</span>
       </div>
       <div class="clock" id="clockLocal">
         <span class="tz" id="localTz">LOCAL</span>
@@ -1223,10 +1233,10 @@
   }, 1000);
 
   /* ---------- Clocks ----------
-     Three columns: London, New York, and wherever the viewer happens to be.
-     Every column carries the same two lines, the time and what its market is
-     doing, because a status that appears under one city and not the others
-     reads as a bug rather than as a decision.
+     Five columns: London, New York, Hong Kong, Seoul, and wherever the viewer
+     happens to be. Every column carries the same two lines, the time and what
+     its market is doing, because a status that appears under one city and not
+     the others reads as a bug rather than as a decision.
 
      A session is a set of wall-clock windows expressed in the market's own
      timezone, so the arithmetic never has to know about offsets or daylight
@@ -1295,9 +1305,14 @@
   var localZone = "";
   try{ localZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; }catch(e){}
 
+  /* Source order only decides ties; display order is computed below. Hong Kong
+     sits before the local column here so that when the viewer is on +08 too,
+     Hong Kong reads first. */
   var COLUMNS = [
     {zone:"Europe/London",    wrap:"clockLondon", time:"londonTime", sess:"londonSession"},
     {zone:"America/New_York", wrap:"clockNy",     time:"nyTime",     sess:"session"},
+    {zone:"Asia/Hong_Kong",   wrap:"clockHk",     time:"hkTime",     sess:"hkSession"},
+    {zone:"Asia/Seoul",       wrap:"clockSeoul",  time:"seoulTime",  sess:"seoulSession"},
     {zone:localZone,          wrap:"clockLocal",  time:"localTime",  sess:"localSession", local:true}
   ];
   COLUMNS.forEach(function(c){
@@ -1312,12 +1327,13 @@
     }catch(e){ c.fmt = null; }
   });
 
-  /* Showing the viewer's own zone twice would be noise, so the third column
-     stands down when it would only repeat one of the first two. */
+  /* Showing the viewer's own zone twice would be noise, so the last column
+     stands down when it would only repeat one of the fixed four. */
   (function(){
-    var col = COLUMNS[2];
+    var col = COLUMNS[COLUMNS.length - 1];
     if(!col.wrapEl) return;
-    if(!localZone || localZone === "Europe/London" || localZone === "America/New_York"){
+    var fixed = ["Europe/London", "America/New_York", "Asia/Hong_Kong", "Asia/Seoul"];
+    if(!localZone || fixed.indexOf(localZone) >= 0){
       col.wrapEl.hidden = true;
       return;
     }
@@ -1343,11 +1359,11 @@
         return Math.round((asUTC - d.getTime()) / 60000);
       }catch(e){ return 0; }
     }
-    COLUMNS.slice().sort(function(a, b){
-      return offsetMinutes(a.zone) - offsetMinutes(b.zone);
-    }).forEach(function(c, i){
-      if(c.wrapEl) c.wrapEl.style.order = String(i);
-    });
+    /* Decorate, sort, undecorate — Array#sort stability is only guaranteed in
+       newer engines, and Hong Kong versus a +08 local column is an exact tie. */
+    COLUMNS.map(function(c, i){ return {c:c, i:i, off:offsetMinutes(c.zone)}; })
+      .sort(function(a, b){ return (a.off - b.off) || (a.i - b.i); })
+      .forEach(function(x, n){ if(x.c.wrapEl) x.c.wrapEl.style.order = String(n); });
   })();
 
   function tickClocks(){
