@@ -2,7 +2,11 @@ package com.kobolibra.bbglive;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.UiModeManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -54,6 +58,16 @@ public class MainActivity extends Activity {
 				ViewGroup.LayoutParams.MATCH_PARENT,
 				ViewGroup.LayoutParams.MATCH_PARENT));
 		setContentView(root);
+
+		// On a television the only input device is a remote, which arrives as
+		// D-pad key events. Those events are delivered to whatever holds focus,
+		// so if the WebView never takes focus the page never sees an arrow key
+		// and none of its controls can be reached. This is the usual reason a
+		// WebView app looks frozen to a remote while working fine under a touch
+		// screen.
+		web.setFocusable(true);
+		web.setFocusableInTouchMode(true);
+		web.requestFocus();
 
 		WebSettings s = web.getSettings();
 		s.setJavaScriptEnabled(true);
@@ -126,8 +140,40 @@ public class MainActivity extends Activity {
 		if (saved != null) {
 			web.restoreState(saved);
 		} else {
-			web.loadUrl(HOME);
+			web.loadUrl(isTelevision() ? (HOME + "?tv=1") : HOME);
 		}
+	}
+
+	// ------------------------------------------------------------------ television
+
+	/**
+	 * Whether this device is a television.
+	 *
+	 * The page cannot work this out for itself with any confidence: a TV box
+	 * reports a perfectly ordinary Android user agent, and screen size alone
+	 * does not distinguish a television from a large tablet. The host does know,
+	 * so it says so in the query string and the page switches to a layout meant
+	 * to be driven by a remote from across a room.
+	 */
+	private boolean isTelevision() {
+		try {
+			UiModeManager ui = (UiModeManager) getSystemService(Context.UI_MODE_SERVICE);
+			if (ui != null && ui.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION) {
+				return true;
+			}
+		} catch (Exception ignored) {
+			// Fall through to the feature check.
+		}
+		try {
+			PackageManager pm = getPackageManager();
+			if (pm != null) {
+				return pm.hasSystemFeature("android.software.leanback")
+						|| pm.hasSystemFeature("android.hardware.type.television");
+			}
+		} catch (Exception ignored) {
+			// Treat an unanswerable question as "not a television".
+		}
+		return false;
 	}
 
 	// ---------------------------------------------------------------- fullscreen
@@ -150,6 +196,10 @@ public class MainActivity extends Activity {
 				ViewGroup.LayoutParams.MATCH_PARENT,
 				ViewGroup.LayoutParams.MATCH_PARENT));
 		web.setVisibility(View.GONE);
+		// The fullscreen view now owns the screen, so it has to own the remote too.
+		view.setFocusable(true);
+		view.setFocusableInTouchMode(true);
+		view.requestFocus();
 		applyImmersive();
 	}
 
@@ -158,6 +208,7 @@ public class MainActivity extends Activity {
 		root.removeView(customView);
 		customView = null;
 		web.setVisibility(View.VISIBLE);
+		web.requestFocus();
 		if (customCallback != null) {
 			customCallback.onCustomViewHidden();
 			customCallback = null;
@@ -181,7 +232,12 @@ public class MainActivity extends Activity {
 	@Override
 	public void onWindowFocusChanged(boolean hasFocus) {
 		super.onWindowFocusChanged(hasFocus);
-		if (hasFocus) applyImmersive();
+		if (hasFocus) {
+			applyImmersive();
+			// Coming back from a system dialog or a home button trip, focus can
+			// land on the decor view and the remote goes dead again.
+			if (customView == null && web != null) web.requestFocus();
+		}
 	}
 
 	// ------------------------------------------------------------------ lifecycle
