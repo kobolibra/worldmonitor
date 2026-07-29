@@ -228,6 +228,41 @@
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
   .screen video{position:relative; z-index:1; width:100%; height:100%; object-fit:contain; background:#000;}
 
+  /* ---------- Cinema layout ----------
+     The panel layout above spends vertical space on a header and a status rail.
+     On a 16:9 display that is the direct cause of black bars down both sides:
+     once two bars have taken their share of the height, what is left is wider
+     than 16:9, so a 16:9 picture can only fill it by height and the remaining
+     width goes black. It is not letterboxing from the broadcast, and it is not
+     the video's aspect ratio - it is the chrome.
+
+     Cinema mode lifts both bars out of the layout flow and floats them over the
+     picture, so the stage becomes the entire viewport and a 16:9 feed on a 16:9
+     screen fills it exactly, edge to edge. The bars then fade out on their own
+     after a few idle seconds and come back on any input, which is how every
+     television player behaves. -->
+  */
+  body.cinema .stage{padding:0;}
+  body.cinema .screen{border-radius:0; box-shadow:none;}
+  body.cinema .screen::before{display:none;}
+  body.cinema .bar,
+  body.cinema .rail{
+    position:fixed; left:0; right:0; z-index:30;
+    padding-left:max(var(--pad-x), env(safe-area-inset-left));
+    padding-right:max(var(--pad-x), env(safe-area-inset-right));
+    transition:opacity .3s ease, transform .3s cubic-bezier(.2,.8,.2,1);
+  }
+  body.cinema .bar{top:0;}
+  body.cinema .rail{
+    bottom:0; padding-top:20px; padding-bottom:16px;
+    background:linear-gradient(0deg,rgba(4,6,9,.94),rgba(4,6,9,.66) 55%,rgba(4,6,9,0));
+  }
+  /* Nothing is hidden while a menu is open or a control holds focus; see
+     sleep() below, which refuses to run in either case. */
+  body.cinema.idle .bar{opacity:0; transform:translateY(-101%); pointer-events:none;}
+  body.cinema.idle .rail{opacity:0; transform:translateY(101%); pointer-events:none;}
+  body.cinema.idle{cursor:none;}
+
   /* ---------- Connection state ---------- */
   .state{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:3;
     display:flex; flex-direction:column; align-items:center; gap:15px; text-align:center;
@@ -273,10 +308,15 @@
   #statLat.catching{color:var(--accent-2);}
   #statBuf.thin{color:var(--accent-2);}
 
-  /* ---------- Rail popovers ----------
-     Two controls share this component: the signal source and the picture
+  /* ---------- Rail popovers and controls ----------
+     Two selectors share this component: the signal source and the picture
      quality. Both are promoted from the readout they replace, so the thing
-     that tells you the state is also the thing that changes it. */
+     that tells you the state is also the thing that changes it.
+
+     The three plain buttons after them exist because a keyboard shortcut is
+     not a control. Play, mute and fullscreen were reachable only by pressing
+     a key, which silently excludes every device without a keyboard - a remote
+     has no F key, so on a television fullscreen was simply unavailable. */
   .qsel{position:relative; display:inline-flex;}
   .q-btn{display:inline-flex; align-items:center; gap:7px; padding:4px 9px; margin:-4px 0;
     border-radius:8px; border:1px solid transparent; background:transparent;
@@ -294,6 +334,7 @@
   .q-chev{width:9px; height:9px; opacity:.5; transition:transform .2s cubic-bezier(.2,.8,.2,1), opacity .18s;}
   .q-btn:disabled .q-chev{opacity:0;}
   .q-btn[aria-expanded="true"] .q-chev{transform:rotate(180deg); opacity:.95;}
+  .ci{width:12px; height:12px; flex:none; opacity:.92;}
 
   .q-pop{position:absolute; bottom:calc(100% + 12px); left:-6px; z-index:40;
     width:252px; max-width:calc(100vw - 32px); padding:6px; border-radius:14px;
@@ -329,6 +370,25 @@
   .q-foot[hidden]{display:none;}
 
   :focus-visible{outline:2px solid var(--accent-2); outline-offset:2px; border-radius:6px;}
+
+  /* ---------- Television ----------
+     Ten feet away, everything above is too small and too quiet. A remote also
+     cannot hover, so the focused control has to be unmistakable rather than
+     merely tinted. */
+  body.tv .rail{gap:14px; font-size:13px; padding-top:22px; padding-bottom:20px;}
+  body.tv .q-btn{font-size:13.5px; padding:9px 14px; margin:0;}
+  body.tv .ci{width:15px; height:15px;}
+  body.tv .q-item{font-size:15px; padding:12px 14px 12px 18px;}
+  body.tv .q-pop{width:320px;}
+  body.tv #sMenu{width:340px;}
+  body.tv .clock time{font-size:16px;}
+  body.tv .keys{display:none;}
+  body.tv .q-btn:focus{outline:0; color:#fff; background:rgba(255,255,255,.1);
+    border-color:var(--accent); box-shadow:0 0 0 2px rgba(255,106,0,.45);}
+  body.tv .q-btn:focus .q-mode{color:var(--accent-2);}
+  body.tv .q-item:focus{outline:0; color:#fff; background:rgba(255,106,0,.16);
+    box-shadow:inset 0 0 0 1px rgba(255,106,0,.5);}
+  body.tv .live:focus{outline:0; box-shadow:0 0 0 2px rgba(255,106,0,.45);}
 
   .noscript{position:fixed; inset:0; z-index:99; display:flex; align-items:center; justify-content:center;
     background:var(--bg); color:var(--muted); font-size:14px; text-align:center; padding:24px;}
@@ -450,6 +510,23 @@
       </div>
     </div>
 
+    <span class="sep-dot" aria-hidden="true"></span>
+
+    <button class="q-btn" id="playBtn" type="button" title="播放 / 暂停（空格）">
+      <svg class="ci" id="playIcon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h3.4v14H7zm6.6 0H17v14h-3.4z"/></svg>
+      <span class="q-mode" id="playTxt">暂停</span>
+    </button>
+
+    <button class="q-btn" id="muteBtn" type="button" title="静音 / 取消静音（M）">
+      <svg class="ci" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg>
+      <span class="q-mode" id="muteTxt">取消静音</span>
+    </button>
+
+    <button class="q-btn" id="fsBtn" type="button" title="全屏（F）">
+      <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M15 4h5v5"/><path d="M20 15v5h-5"/><path d="M9 20H4v-5"/></svg>
+      <span class="q-mode" id="fsTxt">全屏</span>
+    </button>
+
     <span class="sep-dot m-hide" aria-hidden="true"></span>
     <span class="m-hide" id="statRate" title="根据最近几个已缓冲分片实测的平均编码码率">码率 —</span>
     <span class="sep-dot m-hide" aria-hidden="true"></span>
@@ -569,6 +646,17 @@
   var qFoot = document.getElementById("qFoot");
   var qSrc  = document.getElementById("qSrc");
 
+  var playBtn  = document.getElementById("playBtn");
+  var playTxt  = document.getElementById("playTxt");
+  var playIcon = document.getElementById("playIcon");
+  var muteBtn  = document.getElementById("muteBtn");
+  var muteTxt  = document.getElementById("muteTxt");
+  var fsBtn    = document.getElementById("fsBtn");
+  var fsTxt    = document.getElementById("fsTxt");
+
+  var ICON_PLAY  = "M8 5v14l11-7z";
+  var ICON_PAUSE = "M7 5h3.4v14H7zm6.6 0H17v14h-3.4z";
+
   var hls = null;
   var retryTimer = null, countdownTimer = null;
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
@@ -669,6 +757,141 @@
   wireMenu(qBtn, qMenu, qList);
   document.addEventListener("click", closeAllMenus);
   function closeQMenu(){ closeMenu(qBtn, qMenu); }
+
+  /* ---------- Cinema mode, idle chrome and the remote ----------
+     Three problems, one mechanism.
+
+     The black bars down both sides were never the broadcast and never the
+     video's aspect ratio: a header and a status rail were taking a fixed share
+     of the height, which leaves a box wider than 16:9, and a 16:9 picture can
+     only fill such a box by height. Floating both bars over the picture makes
+     the stage the whole viewport, and on a 16:9 screen the feed then fills it
+     exactly.
+
+     Chrome that floats over the picture has to get out of the way, so it fades
+     after a few idle seconds and returns on any input.
+
+     And a remote is not a keyboard. Fullscreen, play and mute used to exist
+     only as key bindings, which on a television means they did not exist at
+     all. They are real buttons now, and the arrow keys walk between them,
+     because a WebView will not reliably do spatial navigation on its own. */
+  var body = document.body;
+  var IDLE_MS = 4200;
+  var idleTimer = null;
+
+  /* The host app appends ?tv=1 when Android reports a television UI mode. The
+     user agent sniff is only a fallback for a plain browser on a TV stick. */
+  var isTv = /(^|[?&])tv=1(&|$)/.test(location.search) ||
+    /Android TV|Google TV|GoogleTV|SMART-TV|SmartTV|BRAVIA|AFT[A-Z]|CrKey|Web0S|Tizen/i.test(navigator.userAgent || "");
+
+  function inCinema(){ return body.classList.contains("cinema"); }
+
+  function sleep(){
+    if(!inCinema()) return;
+    if(!qMenu.hidden || !sMenu.hidden) return; // never hide an open menu
+    var a = document.activeElement;
+    var onControl = !!(a && a.classList && (a.classList.contains("q-btn") || a.classList.contains("live")));
+    if(onControl){
+      /* With a remote, focus lives on a control permanently, so refusing to
+         hide while something is focused would mean never hiding at all. Drop
+         the focus instead; any arrow key brings it straight back. */
+      if(!isTv) return;
+      try{ a.blur(); }catch(e){}
+    }
+    body.classList.add("idle");
+  }
+  function wake(){
+    body.classList.remove("idle");
+    clearTimeout(idleTimer);
+    if(inCinema()) idleTimer = setTimeout(sleep, IDLE_MS);
+  }
+
+  function requestFs(){
+    try{
+      if(screenEl.requestFullscreen) screenEl.requestFullscreen();
+      else if(screenEl.webkitRequestFullscreen) screenEl.webkitRequestFullscreen();
+      else if(video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+    }catch(e){}
+  }
+  function exitFs(){
+    try{
+      var fn = document.exitFullscreen || document.webkitExitFullscreen;
+      if((document.fullscreenElement || document.webkitFullscreenElement) && fn) fn.call(document);
+    }catch(e){}
+  }
+  function setCinema(on){
+    body.classList.toggle("cinema", !!on);
+    fsTxt.textContent = on ? "退出全屏" : "全屏";
+    wake();
+  }
+  /* Cinema and real fullscreen are requested together but do not depend on
+     each other. That matters: an embedded WebView may refuse the fullscreen
+     request outright, and when it does, the bars still need to disappear. */
+  function toggleFullscreen(){
+    var on = !inCinema();
+    setCinema(on);
+    if(on) requestFs(); else exitFs();
+  }
+  document.addEventListener("fullscreenchange", function(){
+    if(isTv) return; // a television is always in cinema mode
+    if(!(document.fullscreenElement || document.webkitFullscreenElement)) setCinema(false);
+  });
+  screenEl.addEventListener("dblclick", toggleFullscreen);
+  fsBtn.addEventListener("click", function(e){ e.stopPropagation(); wake(); toggleFullscreen(); });
+
+  playBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    wake();
+    if(video.paused) video.play().catch(noop); else video.pause();
+  });
+  muteBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    wake();
+    if(video.muted) unmute(); else video.muted = true;
+  });
+
+  function syncControls(){
+    var paused = video.paused;
+    playTxt.textContent = paused ? "播放" : "暂停";
+    var p = playIcon.firstChild;
+    if(p && p.setAttribute) p.setAttribute("d", paused ? ICON_PLAY : ICON_PAUSE);
+    muteTxt.textContent = video.muted ? "取消静音" : "静音";
+  }
+  video.addEventListener("play", syncControls);
+  video.addEventListener("pause", syncControls);
+
+  /* Left to right along the rail, matching the visual order. */
+  var CTRLS = [sBtn, qBtn, playBtn, muteBtn, fsBtn];
+  function liveCtrls(){
+    return CTRLS.filter(function(b){ return b && !b.disabled && b.offsetParent !== null; });
+  }
+  function moveFocus(step){
+    var list = liveCtrls();
+    if(!list.length) return;
+    var i = list.indexOf(document.activeElement);
+    if(i < 0){ list[step > 0 ? 0 : list.length - 1].focus(); return; }
+    list[(i + step + list.length) % list.length].focus();
+  }
+  function focusRail(){
+    var list = liveCtrls();
+    if(list.length) list[0].focus();
+  }
+
+  ["mousemove", "mousedown", "touchstart", "wheel"].forEach(function(evt){
+    document.addEventListener(evt, wake, {passive:true});
+  });
+
+  if(isTv){
+    body.classList.add("tv");
+    /* The system video controls cannot be driven by a remote and swallow the
+       D-pad while they are on screen. The rail replaces them. */
+    try{
+      video.removeAttribute("controls");
+      video.tabIndex = -1;
+    }catch(e){}
+    setCinema(true);
+  }
+  syncControls();
 
   /* ---------- Source selector ---------- */
   function buildSourceMenu(){
@@ -1149,6 +1372,7 @@
   }catch(e){}
   video.addEventListener("volumechange", function(){
     screenEl.classList.toggle("mutedState", video.muted);
+    syncControls();
     try{ if(!video.muted) localStorage.setItem("bbg.volume", String(video.volume)); }catch(e){}
   });
   function unmute(){
@@ -1159,246 +1383,14 @@
   }
   screenEl.addEventListener("click", unmute);
 
-  /* ---------- Fullscreen ---------- */
-  function toggleFullscreen(){
-    try{
-      var fs = document.fullscreenElement || document.webkitFullscreenElement;
-      if(fs){
-        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-      } else if(screenEl.requestFullscreen){
-        screenEl.requestFullscreen();
-      } else if(screenEl.webkitRequestFullscreen){
-        screenEl.webkitRequestFullscreen();
-      } else if(video.webkitEnterFullscreen){
-        video.webkitEnterFullscreen();
-      }
-    }catch(e){}
-  }
-  screenEl.addEventListener("dblclick", toggleFullscreen);
-
-  /* ---------- Keyboard ---------- */
+  /* ---------- Keyboard and remote ----------
+     A television remote arrives here as arrow keys plus Enter, so the arrows
+     have to do something useful at the document level: wake the chrome, then
+     walk along the rail. Enter activates a focused button on its own, and only
+     needs handling when nothing is focused yet. */
   document.addEventListener("keydown", function(e){
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
-    if(!qMenu.hidden || !sMenu.hidden){
-      if(k === "escape"){ closeAllMenus(); }
-      return; // an open menu owns the keyboard
-    }
-    var tag = document.activeElement ? document.activeElement.tagName : "";
-    var onControl = (tag === "BUTTON" || tag === "A" || tag === "INPUT");
-    if(k === " " || k === "k"){
-      if(onControl && k === " ") return; // let space activate the focused control
-      e.preventDefault();
-      if(video.paused) video.play().catch(noop); else video.pause();
-    } else if(k === "m"){
-      if(video.muted) unmute(); else video.muted = true;
-    } else if(k === "f"){
-      toggleFullscreen();
-    } else if(k === "l"){
-      jumpToLive();
-    } else if(k === "s"){
-      e.preventDefault();
-      openMenu(sBtn, sMenu, sList);
-    }
-  });
+    wake();
 
-  /* ---------- Self-healing ---------- */
-  document.addEventListener("visibilitychange", function(){
-    if(document.hidden) return;
-    if(!hls && !retryTimer) return;
-    /* Coming back from a background tab, the gap is usually far larger than
-       the rate controller can absorb, so seek rather than crawl forward. */
-    var l = latency();
-    if(isFinite(l) && l > targetLatency() + 10) jumpToLive();
-  });
-  window.addEventListener("online", function(){ if(!hls) retryNow(); });
-
-  /* ---------- Telemetry rail ---------- */
-  setInterval(function(){
-    try{
-      qRes.textContent = video.videoWidth ? (video.videoWidth + "×" + video.videoHeight) : "—";
-      var lvl = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
-      // Prefer what is actually arriving; fall back to the manifest's declared
-      // value until the first fragment has been measured.
-      var shown = measuredBps || (lvl && lvl.bitrate) || 0;
-      statRate.textContent = "码率 " + (shown ? (Math.round(shown / 1000).toLocaleString() + " kbps") : "—");
-
-      var buf = bufferAhead();
-      statBuf.textContent = "缓冲 " + (isFinite(buf) ? (buf.toFixed(1) + "s") : "—");
-      statBuf.classList.toggle("thin", isFinite(buf) && buf < 4);
-
-      var lat = latency();
-      statLat.textContent = "延迟 " + (isFinite(lat) ? (lat.toFixed(1) + "s") : "—");
-      // Tint the readout while the player is quietly catching up.
-      statLat.classList.toggle("catching", video.playbackRate > 1.01);
-      /* The two numbers that explain the one above, on hover. Without them a
-         latency reading cannot be judged: whether 50s is a fault or simply
-         the configured target depends entirely on what that target is. */
-      statLat.title = "当前画面距离直播边缘的真实时间差\n目标 " + targetLatency().toFixed(1) + "s" +
-        (fragSecs ? ("\n分片时长 " + fragSecs.toFixed(1) + "s") : "") +
-        "\n倍速 " + video.playbackRate.toFixed(2) + "×";
-
-      var behind = isFinite(lat) && lat > targetLatency() + 8 && !video.paused;
-      liveBtn.classList.toggle("behind", behind);
-      liveTxt.textContent = behind ? "回到直播" : "LIVE";
-
-      if(!qMenu.hidden) updateActiveRate();
-    }catch(e){}
-  }, 1000);
-
-  /* ---------- Clocks ----------
-     Five columns: London, New York, Hong Kong, Seoul, and wherever the viewer
-     happens to be. Every column carries the same two lines, the time and what
-     its market is doing, because a status that appears under one city and not
-     the others reads as a bug rather than as a decision.
-
-     A session is a set of wall-clock windows expressed in the market's own
-     timezone, so the arithmetic never has to know about offsets or daylight
-     saving: Intl reports the local hour in that zone and the windows are
-     compared against it directly.
-
-     Holidays are not modelled. A public holiday still reads as an open
-     session, which is the one honest limitation here. */
-  var MARKETS = [
-    {name:"NYSE",  zone:"America/New_York",
-     zones:["America/New_York","America/Toronto","America/Detroit","America/Chicago","America/Denver","America/Phoenix","America/Los_Angeles","America/Vancouver"],
-     pre:[240,570], open:[[570,960]], post:[960,1200]},
-    {name:"LSE",   zone:"Europe/London", zones:["Europe/London","Europe/Dublin","Europe/Lisbon"],
-     pre:[420,480], open:[[480,990]], post:[990,1035]},
-    {name:"XETRA", zone:"Europe/Berlin",
-     zones:["Europe/Berlin","Europe/Paris","Europe/Amsterdam","Europe/Brussels","Europe/Madrid","Europe/Rome","Europe/Zurich","Europe/Vienna","Europe/Stockholm","Europe/Oslo","Europe/Copenhagen","Europe/Helsinki","Europe/Warsaw","Europe/Prague","Europe/Budapest","Europe/Athens"],
-     pre:[480,540], open:[[540,1050]], post:[1050,1110]},
-    {name:"SSE",   zone:"Asia/Shanghai", zones:["Asia/Shanghai","Asia/Chongqing","Asia/Chungking","Asia/Harbin","Asia/Urumqi"],
-     pre:[555,570], open:[[570,690],[780,900]], post:[900,930]},
-    {name:"HKEX",  zone:"Asia/Hong_Kong", zones:["Asia/Hong_Kong","Asia/Macau"],
-     pre:[540,570], open:[[570,720],[780,960]], post:[960,975]},
-    {name:"TWSE",  zone:"Asia/Taipei", zones:["Asia/Taipei"], pre:[510,540], open:[[540,810]], post:null},
-    {name:"TSE",   zone:"Asia/Tokyo", zones:["Asia/Tokyo"], pre:[480,540], open:[[540,690],[750,930]], post:null},
-    {name:"KRX",   zone:"Asia/Seoul", zones:["Asia/Seoul"], pre:[480,540], open:[[540,930]], post:[930,1080]},
-    {name:"SGX",   zone:"Asia/Singapore", zones:["Asia/Singapore","Asia/Kuala_Lumpur"], pre:[480,540], open:[[540,1020]], post:null},
-    {name:"NSE",   zone:"Asia/Kolkata", zones:["Asia/Kolkata","Asia/Calcutta"], pre:[540,555], open:[[555,930]], post:null},
-    {name:"DFM",   zone:"Asia/Dubai", zones:["Asia/Dubai"], pre:[570,600], open:[[600,870]], post:null},
-    {name:"ASX",   zone:"Australia/Sydney",
-     zones:["Australia/Sydney","Australia/Melbourne","Australia/Brisbane","Australia/Hobart","Australia/Canberra","Pacific/Auckland"],
-     pre:[420,600], open:[[600,960]], post:[960,1020]}
-  ];
-  function marketFor(zone){
-    if(!zone) return null;
-    for(var i = 0; i < MARKETS.length; i++){
-      if(MARKETS[i].zones.indexOf(zone) >= 0) return MARKETS[i];
-    }
-    return null;
-  }
-
-  /* One formatter per zone, built once and reused: constructing an Intl
-     formatter is far from free and this runs every second. */
-  var partsFmts = {};
-  function zoneNow(zone){
-    var f = partsFmts[zone];
-    if(!f){
-      f = new Intl.DateTimeFormat("en-US", {timeZone:zone, weekday:"short", hour:"2-digit", minute:"2-digit", hourCycle:"h23"});
-      partsFmts[zone] = f;
-    }
-    var o = {};
-    f.formatToParts(new Date()).forEach(function(x){ o[x.type] = x.value; });
-    return {wd:o.weekday, mins:(parseInt(o.hour, 10) % 24) * 60 + parseInt(o.minute, 10)};
-  }
-  function within(win, m){ return !!win && m >= win[0] && m < win[1]; }
-  function sessionOf(mkt){
-    if(!mkt) return {t:"—", c:"off"};
-    var p = zoneNow(mkt.zone), m = p.mins, i;
-    if(p.wd === "Sat" || p.wd === "Sun") return {t:"周末休市", c:"off"};
-    for(i = 0; i < mkt.open.length; i++){ if(within(mkt.open[i], m)) return {t:"开盘", c:"on"}; }
-    /* The gap between two trading segments is a lunch break, not a close. */
-    if(mkt.open.length > 1 && m >= mkt.open[0][1] && m < mkt.open[1][0]) return {t:"午间休市", c:"off"};
-    if(within(mkt.pre, m))  return {t:"盘前", c:"pre"};
-    if(within(mkt.post, m)) return {t:"盘后", c:"pre"};
-    return {t:"收盘", c:"off"};
-  }
-
-  var localZone = "";
-  try{ localZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; }catch(e){}
-
-  /* Source order only decides ties; display order is computed below. Hong Kong
-     sits before the local column here so that when the viewer is on +08 too,
-     Hong Kong reads first. */
-  var COLUMNS = [
-    {zone:"Europe/London",    wrap:"clockLondon", time:"londonTime", sess:"londonSession"},
-    {zone:"America/New_York", wrap:"clockNy",     time:"nyTime",     sess:"session"},
-    {zone:"Asia/Hong_Kong",   wrap:"clockHk",     time:"hkTime",     sess:"hkSession"},
-    {zone:"Asia/Seoul",       wrap:"clockSeoul",  time:"seoulTime",  sess:"seoulSession"},
-    {zone:localZone,          wrap:"clockLocal",  time:"localTime",  sess:"localSession", local:true}
-  ];
-  COLUMNS.forEach(function(c){
-    c.wrapEl = document.getElementById(c.wrap);
-    c.timeEl = document.getElementById(c.time);
-    c.sessEl = document.getElementById(c.sess);
-    c.market = marketFor(c.zone);
-    try{
-      c.fmt = new Intl.DateTimeFormat("en-GB", c.zone
-        ? {timeZone:c.zone, hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"}
-        : {hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
-    }catch(e){ c.fmt = null; }
-  });
-
-  /* Showing the viewer's own zone twice would be noise, so the last column
-     stands down when it would only repeat one of the fixed four. */
-  (function(){
-    var col = COLUMNS[COLUMNS.length - 1];
-    if(!col.wrapEl) return;
-    var fixed = ["Europe/London", "America/New_York", "Asia/Hong_Kong", "Asia/Seoul"];
-    if(!localZone || fixed.indexOf(localZone) >= 0){
-      col.wrapEl.hidden = true;
-      return;
-    }
-    var label = document.getElementById("localTz");
-    if(label) label.textContent = localZone.split("/").pop().replace(/_/g, " ").toUpperCase();
-  })();
-
-  /* Left to right in true east-bound order, the way a trading day actually
-     travels: the zone furthest behind UTC sits first and the one furthest
-     ahead sits last. Computed from the live offset rather than hard-coded, so
-     it stays right through daylight saving and through whatever zone the
-     viewer is actually in. */
-  (function(){
-    function offsetMinutes(zone){
-      try{
-        var d = new Date();
-        var f = new Intl.DateTimeFormat("en-US", zone
-          ? {timeZone:zone, hourCycle:"h23", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit"}
-          : {hourCycle:"h23", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit"});
-        var o = {};
-        f.formatToParts(d).forEach(function(x){ o[x.type] = x.value; });
-        var asUTC = Date.UTC(+o.year, (+o.month) - 1, +o.day, (+o.hour) % 24, +o.minute, +o.second);
-        return Math.round((asUTC - d.getTime()) / 60000);
-      }catch(e){ return 0; }
-    }
-    /* Decorate, sort, undecorate — Array#sort stability is only guaranteed in
-       newer engines, and Hong Kong versus a +08 local column is an exact tie. */
-    COLUMNS.map(function(c, i){ return {c:c, i:i, off:offsetMinutes(c.zone)}; })
-      .sort(function(a, b){ return (a.off - b.off) || (a.i - b.i); })
-      .forEach(function(x, n){ if(x.c.wrapEl) x.c.wrapEl.style.order = String(n); });
-  })();
-
-  function tickClocks(){
-    var now = new Date();
-    COLUMNS.forEach(function(c){
-      try{
-        if(!c.wrapEl || c.wrapEl.hidden) return;
-        if(c.fmt && c.timeEl) c.timeEl.textContent = c.fmt.format(now);
-        if(c.sessEl){
-          var s = sessionOf(c.market);
-          c.sessEl.textContent = s.t;
-          c.sessEl.className = "session " + s.c;
-        }
-      }catch(e){}
-    });
-  }
-  tickClocks();
-  setInterval(tickClocks, 1000);
-
-  playHls();
-})();
-</script>
-</body>
-</html>
+    
