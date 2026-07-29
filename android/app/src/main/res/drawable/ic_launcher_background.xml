@@ -1,10 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+	The plate behind the mark. Flat black, because the mark it carries is
+	monochrome and has always been: no gradient, no tint, no bevel.
+
+	The rectangle is deliberately larger than the 108 unit viewport. A launcher
+	may shift the background layer by up to a few units in either direction as
+	part of its parallax effect, and a rectangle that stopped at the viewport
+	edge would show a hairline of nothing when that happens.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
 	android:width="108dp"
 	android:height="108dp"
 	android:viewportWidth="108"
 	android:viewportHeight="108">
 	<path
-		android:fillColor="#0A0C0F"
-		android:pathData="M0,0 H108 V108 H0 Z" />
+		android:fillColor="#000000"
+		android:pathData="M-8,-8H116V116H-8Z" />
 </vector>

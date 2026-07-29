@@ -1,28 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-	A capital B in the grotesque style the Bloomberg wordmark uses: narrow,
-	flat vertical right side on each bowl, tight corner curves rather than
-	semicircles, a smaller upper bowl, and squarish counters punched back out
-	in the plate colour. Cap height runs 26 to 82 on the 108 unit grid, stem
-	width 12, every horizontal stroke 9, all inside the 18 to 90 safe zone.
+	The capital B of the mark.
+
+	This outline is not hand drawn. It is the real glyph outline of a bold
+	neo-grotesque capital B, the Helvetica family that Bloomberg's own mark is
+	set in, taken directly from the font and mapped onto the 108 unit adaptive
+	icon grid. Earlier revisions approximated the letter with rounded
+	rectangles, which is why the bowls looked too circular and the whole thing
+	read as geometric rather than grotesque.
+
+	Geometry notes, in grid units:
+	  cap height 52, from y=28 to y=80, so the letter is centred vertically
+	  ink width 43.56, centred at x=32.22
+	  half diagonal of the ink box 33.92, inside the 36 radius circle that the
+	  circular launcher mask leaves visible, so no corner of the letter can be
+	  clipped on any mask shape a launcher might apply
+
+	fillType is nonZero, which is what keeps the two counters open: the glyph
+	contours wind in opposite directions, exactly as the type designer drew
+	them, so no second shape painted in the background colour is needed.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
 	android:width="108dp"
 	android:height="108dp"
 	android:viewportWidth="108"
 	android:viewportHeight="108">
-
 	<path
 		android:fillColor="#FFFFFF"
-		android:pathData="M36,26 H54 A12,12 0 0 1 66,38 V46 A12,12 0 0 1 54,58 H36 Z" />
-	<path
-		android:fillColor="#FFFFFF"
-		android:pathData="M36,50 H57 A13,13 0 0 1 70,63 V69 A13,13 0 0 1 57,82 H36 Z" />
-
-	<path
-		android:fillColor="#0A0C0F"
-		android:pathData="M48,35 H51 A5.5,5.5 0 0 1 56.5,40.5 V43.5 A5.5,5.5 0 0 1 51,49 H48 Z" />
-	<path
-		android:fillColor="#0A0C0F"
-		android:pathData="M48,58 H54 A6,6 0 0 1 60,64 V67 A6,6 0 0 1 54,73 H48 Z" />
+		android:fillType="nonZero"
+		android:pathData="M32.22,28H53.01Q59.18,28 62.21,28.51Q65.24,29.03 67.64,30.66Q70.03,32.29 71.63,35.01Q73.23,37.72 73.23,41.09Q73.23,44.74 71.26,47.79Q69.29,50.84 65.92,52.37Q70.67,53.75 73.23,57.09Q75.78,60.42 75.78,64.92Q75.78,68.47 74.13,71.82Q72.48,75.18 69.62,77.18Q66.77,79.18 62.58,79.65Q59.96,79.93 49.92,80H32.22ZM42.72,36.65V48.68H49.6Q55.74,48.68 57.23,48.5Q59.92,48.18 61.47,46.64Q63.01,45.1 63.01,42.58Q63.01,40.17 61.68,38.66Q60.35,37.15 57.72,36.83Q56.16,36.65 48.75,36.65ZM42.72,57.33V71.24H52.44Q58.11,71.24 59.64,70.92Q61.98,70.49 63.45,68.84Q64.92,67.2 64.92,64.43Q64.92,62.09 63.79,60.46Q62.65,58.82 60.51,58.08Q58.36,57.33 51.2,57.33Z" />
 </vector>
