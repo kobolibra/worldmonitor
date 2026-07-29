@@ -5,21 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#06070a">
-<meta name="description" content="Bloomberg Television 官方直播流，纯净全屏播放。">
 <title>Bloomberg Live</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 108 108'%3E%3Crect width='108' height='108' fill='%23000'/%3E%3Cpath fill='%23fff' d='M32.22,28H53.01Q59.18,28 62.21,28.51Q65.24,29.03 67.64,30.66Q70.03,32.29 71.63,35.01Q73.23,37.72 73.23,41.09Q73.23,44.74 71.26,47.79Q69.29,50.84 65.92,52.37Q70.67,53.75 73.23,57.09Q75.78,60.42 75.78,64.92Q75.78,68.47 74.13,71.82Q72.48,75.18 69.62,77.18Q66.77,79.18 62.58,79.65Q59.96,79.93 49.92,80H32.22ZM42.72,36.65V48.68H49.6Q55.74,48.68 57.23,48.5Q59.92,48.18 61.47,46.64Q63.01,45.1 63.01,42.58Q63.01,40.17 61.68,38.66Q60.35,37.15 57.72,36.83Q56.16,36.65 48.75,36.65ZM42.72,57.33V71.24H52.44Q58.11,71.24 59.64,70.92Q61.98,70.49 63.45,68.84Q64.92,67.2 64.92,64.43Q64.92,62.09 63.79,60.46Q62.65,58.82 60.51,58.08Q58.36,57.33 51.2,57.33Z'/%3E%3C/svg%3E">
-
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://www.bloomberg.com" crossorigin>
 <link rel="dns-prefetch" href="https://registry.npmmirror.com">
 <link rel="dns-prefetch" href="https://unpkg.com">
 
-<!-- Player bootstrap, deliberately first.
-     The library used to be fetched from the bottom of <body>, so the request
-     could not start until the entire document had been parsed. Declaring it
-     here lets the browser's preload scanner begin the download within the first
-     few milliseconds, in parallel with CSS parsing. The multi-CDN fallback is
-     kept: the static tag below reports failure into the same chain. -->
+<!-- Player bootstrap, first in the document so the preload scanner starts the
+     download immediately. Multi-CDN fallback; the static tag reports into it. -->
 <script>
 (function(){
   var MIRRORS = [
@@ -28,7 +22,6 @@
   ];
   var TIMEOUT = 6000;
   var i = 0, settled = false, waiters = [], timer = null;
-
   function settle(ok){
     if(settled) return;
     settled = true;
@@ -54,79 +47,50 @@
     el.onerror = fail;
     document.head.appendChild(el);
   }
-
   window.__hlsOk   = function(){ window.Hls ? settle(true) : next(); };
   window.__hlsFail = function(){ next(); };
-  /* Resolves immediately if the library is already present. */
   window.__hlsReady = function(cb){
     if(window.Hls) return cb(true);
     if(settled) return cb(false);
     waiters.push(cb);
   };
-  /* A blocked CDN often hangs rather than erroring, so arm a watchdog too. */
   timer = setTimeout(function(){ if(!window.Hls) next(); }, TIMEOUT);
 })();
 </script>
 <script async src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js" onload="__hlsOk()" onerror="__hlsFail()"></script>
 
-<!-- Connection warm up, running in parallel with the download above.
-     Nothing here plays anything, and nothing here is required.
-
-     Cold start used to be strictly serial: the first contact with the origin
-     could not begin until hls.js had finished arriving, because hls.js is the
-     thing that asks for the manifest. Over a long path that puts two full
-     handshakes in a queue for no reason.
-
-     Asking for the master playlist now does the lookup, the TLS handshake and
-     the manifest round trip while the library is still in flight. The variant
-     addresses it returns also name the host that will serve the video
-     segments, which is otherwise not known until the player has already
-     started, so that connection is opened early too.
-
-     Every step is wrapped. On any failure this does nothing at all and the
-     original path runs exactly as before. -->
+<!-- Connection warm up. Asking for the master playlist early does the DNS
+     lookup, the TLS handshake and the manifest round trip while hls.js is
+     still in flight, and the variant addresses name the segment host so that
+     connection can be opened early too. Entirely optional; wrapped throughout. -->
 <script>
 (function(){
   if(!window.fetch || !window.URL) return;
-
-  /* Mirrors SOURCES in the main script below. This copy is only a warm up
-     hint, so if the two ever drift the worst case is one idle connection. */
   var BASE  = "https://www.bloomberg.com/media-manifest/streams/";
   var FILES = {asia:"asia.m3u8", phoenix:"phoenix-us.m3u8", us:"us.m3u8", eu:"eu.m3u8", aus:"aus.m3u8"};
-
   var id = "asia";
   try{ id = localStorage.getItem("bbg.source") || "asia"; }catch(e){}
   var url = BASE + (FILES[id] || FILES.asia);
-
   function preconnect(origin){
     try{
       if(document.querySelector('link[rel="preconnect"][href="' + origin + '"]')) return;
       var l = document.createElement("link");
-      l.rel = "preconnect";
-      l.href = origin;
-      l.crossOrigin = "";
+      l.rel = "preconnect"; l.href = origin; l.crossOrigin = "";
       document.head.appendChild(l);
     }catch(e){}
   }
-
   try{
     fetch(url, {mode:"cors", credentials:"omit"}).then(function(r){
       return r && r.ok ? r.text() : "";
     }).then(function(txt){
       if(!txt) return;
-      /* Non comment lines in a master playlist are the variant addresses.
-         Two distinct origins is plenty; the rest will reuse them. */
       var lines = txt.split("\n"), seen = {}, found = 0;
       for(var i = 0; i < lines.length && found < 2; i++){
         var s = lines[i].trim();
         if(!s || s.charAt(0) === "#") continue;
         try{
           var o = new URL(s, url).origin;
-          if(o && o.indexOf("http") === 0 && !seen[o]){
-            seen[o] = 1;
-            found++;
-            preconnect(o);
-          }
+          if(o && o.indexOf("http") === 0 && !seen[o]){ seen[o] = 1; found++; preconnect(o); }
         }catch(e){}
       }
     })["catch"](function(){});
@@ -144,8 +108,7 @@
     --radius:18px;
     --amb:rgba(255,106,0,.16);
     --pad-x:clamp(16px,3.2vw,34px);
-    /* System stack: renders instantly, needs no third party, cannot fail. */
-    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI Variable Text','Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
     --mark:'Helvetica Neue',Helvetica,Arial,sans-serif;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
@@ -157,10 +120,6 @@
     height:100vh; height:100dvh; overflow:hidden;
     padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
-  /* Static ambient wash. This used to be driven by a canvas that sampled the
-     video 40 times a minute; each sample was a synchronous GPU readback that
-     competed with the decoder for exactly the frames it was decorating. The
-     gradient below costs nothing and reads almost the same. */
   .ambient{
     position:fixed; inset:-20%; z-index:0; pointer-events:none;
     background:
@@ -204,7 +163,6 @@
   .live.behind .dot{background:var(--accent); animation:none;}
   .live.behind:hover{background:rgba(255,106,0,.18);}
 
-  /* Five columns is a lot of header, so the gap tightens as the row grows. */
   .clocks{margin-left:auto; display:flex; align-items:flex-start; gap:clamp(11px,1.5vw,22px);}
   .clock{display:flex; flex-direction:column; gap:3px; align-items:flex-end;}
   .clock[hidden]{display:none;}
@@ -229,19 +187,12 @@
   .screen video{position:relative; z-index:1; width:100%; height:100%; object-fit:contain; background:#000;}
 
   /* ---------- Cinema layout ----------
-     The panel layout above spends vertical space on a header and a status rail.
-     On a 16:9 display that is the direct cause of black bars down both sides:
-     once two bars have taken their share of the height, what is left is wider
-     than 16:9, so a 16:9 picture can only fill it by height and the remaining
-     width goes black. It is not letterboxing from the broadcast, and it is not
-     the video's aspect ratio - it is the chrome.
-
-     Cinema mode lifts both bars out of the layout flow and floats them over the
-     picture, so the stage becomes the entire viewport and a 16:9 feed on a 16:9
-     screen fills it exactly, edge to edge. The bars then fade out on their own
-     after a few idle seconds and come back on any input, which is how every
-     television player behaves. -->
-  */
+     The black bars down both sides are the chrome, not the broadcast: once a
+     header and a rail have taken their share of the height, what remains is
+     wider than 16:9, and a 16:9 picture can only fill such a box by height.
+     Floating both bars over the picture makes the stage the whole viewport, so
+     a 16:9 feed on a 16:9 screen fills it edge to edge. The bars then fade
+     after a few idle seconds and return on any input. */
   body.cinema .stage{padding:0;}
   body.cinema .screen{border-radius:0; box-shadow:none;}
   body.cinema .screen::before{display:none;}
@@ -253,12 +204,8 @@
     transition:opacity .3s ease, transform .3s cubic-bezier(.2,.8,.2,1);
   }
   body.cinema .bar{top:0;}
-  body.cinema .rail{
-    bottom:0; padding-top:20px; padding-bottom:16px;
-    background:linear-gradient(0deg,rgba(4,6,9,.94),rgba(4,6,9,.66) 55%,rgba(4,6,9,0));
-  }
-  /* Nothing is hidden while a menu is open or a control holds focus; see
-     sleep() below, which refuses to run in either case. */
+  body.cinema .rail{bottom:0; padding-top:20px; padding-bottom:16px;
+    background:linear-gradient(0deg,rgba(4,6,9,.94),rgba(4,6,9,.66) 55%,rgba(4,6,9,0));}
   body.cinema.idle .bar{opacity:0; transform:translateY(-101%); pointer-events:none;}
   body.cinema.idle .rail{opacity:0; transform:translateY(101%); pointer-events:none;}
   body.cinema.idle{cursor:none;}
@@ -284,7 +231,6 @@
   .retryNow:hover{background:rgba(255,255,255,.11); border-color:rgba(255,255,255,.26);}
   .state.error .retryNow{display:inline-flex;}
 
-  /* ---------- Unmute hint ---------- */
   .hint{position:absolute; bottom:58px; left:50%; transform:translateX(-50%); z-index:5; display:none;
     align-items:center; gap:8px; padding:9px 16px; border-radius:999px;
     background:rgba(6,8,10,.66); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
@@ -308,15 +254,9 @@
   #statLat.catching{color:var(--accent-2);}
   #statBuf.thin{color:var(--accent-2);}
 
-  /* ---------- Rail popovers and controls ----------
-     Two selectors share this component: the signal source and the picture
-     quality. Both are promoted from the readout they replace, so the thing
-     that tells you the state is also the thing that changes it.
-
-     The three plain buttons after them exist because a keyboard shortcut is
-     not a control. Play, mute and fullscreen were reachable only by pressing
-     a key, which silently excludes every device without a keyboard - a remote
-     has no F key, so on a television fullscreen was simply unavailable. */
+  /* Selectors, and three plain buttons. A keyboard shortcut is not a control:
+     play, mute and fullscreen used to be reachable only by key, which on a
+     television means not reachable at all. */
   .qsel{position:relative; display:inline-flex;}
   .q-btn{display:inline-flex; align-items:center; gap:7px; padding:4px 9px; margin:-4px 0;
     border-radius:8px; border:1px solid transparent; background:transparent;
@@ -328,7 +268,6 @@
   .q-btn:disabled{cursor:default;}
   .q-mode{color:var(--muted); transition:color .18s;}
   .q-btn:hover:not(:disabled) .q-mode,.q-btn[aria-expanded="true"] .q-mode{color:var(--accent-2);}
-  /* The lock could not be held. The label says so, so it is never a surprise. */
   .q-btn.fallen .q-mode{color:var(--accent-2);}
   .q-thin{width:1px; height:9px; background:currentColor; opacity:.32;}
   .q-chev{width:9px; height:9px; opacity:.5; transition:transform .2s cubic-bezier(.2,.8,.2,1), opacity .18s;}
@@ -372,9 +311,8 @@
   :focus-visible{outline:2px solid var(--accent-2); outline-offset:2px; border-radius:6px;}
 
   /* ---------- Television ----------
-     Ten feet away, everything above is too small and too quiet. A remote also
-     cannot hover, so the focused control has to be unmistakable rather than
-     merely tinted. */
+     Ten feet away everything above is too small, and a remote cannot hover, so
+     the focused control has to be unmistakable rather than merely tinted. */
   body.tv .rail{gap:14px; font-size:13px; padding-top:22px; padding-bottom:20px;}
   body.tv .q-btn{font-size:13.5px; padding:9px 14px; margin:0;}
   body.tv .ci{width:15px; height:15px;}
@@ -393,13 +331,10 @@
   .noscript{position:fixed; inset:0; z-index:99; display:flex; align-items:center; justify-content:center;
     background:var(--bg); color:var(--muted); font-size:14px; text-align:center; padding:24px;}
 
-  /* Five clocks will not fit forever, so they retire in a deliberate order.
-     The two that always stay are New York, because the feed itself is anchored
-     to that session, and the local column, because it is the viewer's own. */
-  @media (max-width:1240px){
-    /* A key legend is a reminder, not information. It goes first. */
-    .keys{display:none;}
-  }
+  /* Five clocks cannot fit forever. New York stays because the feed is
+     anchored to that session, and the local column because it is the
+     viewer's own. */
+  @media (max-width:1240px){ .keys{display:none;} }
   @media (max-width:1040px){ #clockSeoul{display:none;} }
   @media (max-width:900px){ #clockLondon{display:none;} }
   @media (max-width:760px){ #clockHk{display:none;} }
@@ -432,8 +367,7 @@
     <button class="live" id="liveBtn" type="button" title="回到直播边缘（L）">
       <span class="dot" aria-hidden="true"></span><span id="liveTxt">LIVE</span>
     </button>
-    <!-- The columns are ordered at runtime by real UTC offset, so the source
-         order here is not the display order. -->
+    <!-- Ordered at runtime by real UTC offset; source order is not display order. -->
     <div class="clocks">
       <div class="clock" id="clockLondon">
         <span class="tz">LONDON</span>
@@ -472,9 +406,7 @@
         <p class="stateSub" id="stateSub"></p>
         <button class="retryNow" id="retryNow" type="button">立即重试</button>
       </div>
-
       <div class="hint" id="hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
-
       <video id="video" playsinline controls style="display:none"></video>
     </div>
   </main>
@@ -516,12 +448,10 @@
       <svg class="ci" id="playIcon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h3.4v14H7zm6.6 0H17v14h-3.4z"/></svg>
       <span class="q-mode" id="playTxt">暂停</span>
     </button>
-
     <button class="q-btn" id="muteBtn" type="button" title="静音 / 取消静音（M）">
       <svg class="ci" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg>
       <span class="q-mode" id="muteTxt">取消静音</span>
     </button>
-
     <button class="q-btn" id="fsBtn" type="button" title="全屏（F）">
       <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M15 4h5v5"/><path d="M20 15v5h-5"/><path d="M9 20H4v-5"/></svg>
       <span class="q-mode" id="fsTxt">全屏</span>
@@ -546,20 +476,9 @@
 (function(){
   "use strict";
 
-  /* ---------- Signal sources ----------
-     Bloomberg publishes several parallel live feeds. The newsroom is the same,
-     but the broadcast graphics package baked into the video differs: the
-     classic L-bar layout (main picture top-left, news crawl along the bottom,
-     quote rail down the right side) is part of the encoded picture, not an
-     overlay that could be added or removed here. Nothing in the manifest
-     declares it, so it cannot be detected — it has to be a choice.
-
-     ASIA leads the list because its origin is nearest, which is what actually
-     determines whether the picture holds together. US ALT carries the full
-     broadcast package but originates in US-East; that is a trade worth
-     offering and not worth making on someone's behalf.
-
-     Kept in step with the warm up map in <head>. */
+  /* Parallel Bloomberg feeds. The L-bar graphics package is baked into the
+     encoded picture, not an overlay, and nothing in the manifest declares it,
+     so it has to be a choice. ASIA leads because its origin is nearest. */
   var SOURCES = [
     {id:"asia",    name:"ASIA",   note:"亚洲 · 回源最近", url:"https://www.bloomberg.com/media-manifest/streams/asia.m3u8"},
     {id:"phoenix", name:"US ALT", note:"美东 · 带行情条", url:"https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8"},
@@ -572,16 +491,8 @@
     return SOURCES[0];
   }
 
-  /* ---------- Stored preferences ----------
-     A one-time reset, because changing a default in source does not reach
-     anyone who already has the old value written to their browser. The pinned
-     era stored an explicit 1080p, which is read back on every load and
-     re-applied as a hard lock — so without this, the revert below would
-     appear to do nothing at all.
-
-     The remembered source is deliberately left alone: it is named in plain
-     sight on the rail and is one click to change, so overriding it would be
-     taking away a choice rather than undoing one. */
+  /* One time reset: the pinned era wrote an explicit 1080p into storage, which
+     would be read back and re-applied as a hard lock on every load. */
   try{
     if(localStorage.getItem("bbg.pref") !== "2"){
       localStorage.removeItem("bbg.quality");
@@ -596,19 +507,9 @@
   }catch(e){}
   function streamUrl(){ return currentSource.url; }
 
-  /* ---------- Quality preference ----------
-     Auto by default, and auto means auto: hls.js measures the link and picks,
-     which is the entire point of an adaptive ladder. A previous revision
-     defaulted this to 1080p and then spent several iterations building
-     machinery to survive the consequences. Worse, the preference is shared
-     across sources, so pinning it also pinned feeds that had been perfectly
-     happy adapting.
-
-     An explicit pick is still an explicit pick — a real level lock, obeyed
-     until changed. Nothing chooses on the viewer's behalf.
-
-     Stored as a picture height, never as a level index: indices are specific
-     to one manifest and would point at an unrelated rung on another feed. */
+  /* Auto by default, and auto means auto. An explicit pick is a real lock.
+     Stored as a picture height, never a level index: indices belong to one
+     manifest and would point at an unrelated rung on another feed. */
   var DEFAULT_QUALITY = "auto";
   var prefQuality = DEFAULT_QUALITY;
   try{
@@ -660,14 +561,12 @@
   var hls = null;
   var retryTimer = null, countdownTimer = null;
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
-  var measuredBps = 0;   // EWMA of the real encoded bitrate
-  var fragSecs = 0;      // measured fragment duration, for the latency tooltip
-  var heightIndex = {};  // picture height -> the level index the menu offers
+  var measuredBps = 0;
+  var fragSecs = 0;
+  var heightIndex = {};
 
-  /* The rung the viewer explicitly asked for, as a picture height.
-     Height rather than index, because hls.js renumbers hls.levels when it
-     removes a failing one — an index captured earlier would then silently
-     refer to a different rung. */
+  /* The rung asked for, as a height: hls.js renumbers hls.levels when it drops
+     a failing one, so a captured index would later mean something else. */
   var lockedHeight = null;
   var relockTries = 0, relockTimer = null;
   var RELOCK_DELAYS = [4000, 10000, 20000];
@@ -680,7 +579,6 @@
   function setTitle(prefix){ document.title = prefix ? (prefix + " · Bloomberg Live") : "Bloomberg Live"; }
   function nativeOk(){ return !!video.canPlayType("application/vnd.apple.mpegurl"); }
 
-  /* ---------- Connection state ---------- */
   function showLoading(text, sub){
     stateEl.hidden = false; stateEl.classList.remove("error");
     stateTxt.textContent = text; stateSub.textContent = sub || "";
@@ -697,7 +595,6 @@
   function showHint(){ hintEl.classList.remove("show"); void hintEl.offsetWidth; hintEl.classList.add("show"); }
   function destroyHls(){ if(hls){ try{ hls.destroy(); }catch(e){} hls = null; } }
 
-  /* Capped exponential backoff beats hammering a CDN every 5s forever. */
   function backoffMs(n){
     var steps = [3000, 5000, 8000, 13000, 21000, 30000];
     return steps[Math.min(n - 1, steps.length - 1)];
@@ -720,7 +617,7 @@
   function retryNow(){ clearTimeout(retryTimer); clearInterval(countdownTimer); playHls(); }
   retryBtn.addEventListener("click", retryNow);
 
-  /* ---------- Shared popover behaviour ---------- */
+  /* ---------- Popovers ---------- */
   function closeMenu(btn, pop){
     pop.hidden = true;
     btn.setAttribute("aria-expanded", "false");
@@ -758,29 +655,13 @@
   document.addEventListener("click", closeAllMenus);
   function closeQMenu(){ closeMenu(qBtn, qMenu); }
 
-  /* ---------- Cinema mode, idle chrome and the remote ----------
-     Three problems, one mechanism.
-
-     The black bars down both sides were never the broadcast and never the
-     video's aspect ratio: a header and a status rail were taking a fixed share
-     of the height, which leaves a box wider than 16:9, and a 16:9 picture can
-     only fill such a box by height. Floating both bars over the picture makes
-     the stage the whole viewport, and on a 16:9 screen the feed then fills it
-     exactly.
-
-     Chrome that floats over the picture has to get out of the way, so it fades
-     after a few idle seconds and returns on any input.
-
-     And a remote is not a keyboard. Fullscreen, play and mute used to exist
-     only as key bindings, which on a television means they did not exist at
-     all. They are real buttons now, and the arrow keys walk between them,
-     because a WebView will not reliably do spatial navigation on its own. */
+  /* ---------- Cinema mode, idle chrome, remote ---------- */
   var body = document.body;
   var IDLE_MS = 4200;
   var idleTimer = null;
 
-  /* The host app appends ?tv=1 when Android reports a television UI mode. The
-     user agent sniff is only a fallback for a plain browser on a TV stick. */
+  /* The host app appends ?tv=1 when Android reports a television UI mode; the
+     user agent test is only a fallback for a plain browser on a TV stick. */
   var isTv = /(^|[?&])tv=1(&|$)/.test(location.search) ||
     /Android TV|Google TV|GoogleTV|SMART-TV|SmartTV|BRAVIA|AFT[A-Z]|CrKey|Web0S|Tizen/i.test(navigator.userAgent || "");
 
@@ -788,13 +669,13 @@
 
   function sleep(){
     if(!inCinema()) return;
-    if(!qMenu.hidden || !sMenu.hidden) return; // never hide an open menu
+    if(!qMenu.hidden || !sMenu.hidden) return;
     var a = document.activeElement;
     var onControl = !!(a && a.classList && (a.classList.contains("q-btn") || a.classList.contains("live")));
     if(onControl){
       /* With a remote, focus lives on a control permanently, so refusing to
-         hide while something is focused would mean never hiding at all. Drop
-         the focus instead; any arrow key brings it straight back. */
+         hide while anything is focused would mean never hiding. Drop the
+         focus instead; any arrow key brings it back. */
       if(!isTv) return;
       try{ a.blur(); }catch(e){}
     }
@@ -824,29 +705,27 @@
     fsTxt.textContent = on ? "退出全屏" : "全屏";
     wake();
   }
-  /* Cinema and real fullscreen are requested together but do not depend on
-     each other. That matters: an embedded WebView may refuse the fullscreen
-     request outright, and when it does, the bars still need to disappear. */
+  /* Cinema and real fullscreen are requested together but do not depend on one
+     another: an embedded WebView may refuse the fullscreen request, and when it
+     does the bars still have to disappear. */
   function toggleFullscreen(){
     var on = !inCinema();
     setCinema(on);
     if(on) requestFs(); else exitFs();
   }
   document.addEventListener("fullscreenchange", function(){
-    if(isTv) return; // a television is always in cinema mode
+    if(isTv) return;
     if(!(document.fullscreenElement || document.webkitFullscreenElement)) setCinema(false);
   });
   screenEl.addEventListener("dblclick", toggleFullscreen);
   fsBtn.addEventListener("click", function(e){ e.stopPropagation(); wake(); toggleFullscreen(); });
 
   playBtn.addEventListener("click", function(e){
-    e.stopPropagation();
-    wake();
+    e.stopPropagation(); wake();
     if(video.paused) video.play().catch(noop); else video.pause();
   });
   muteBtn.addEventListener("click", function(e){
-    e.stopPropagation();
-    wake();
+    e.stopPropagation(); wake();
     if(video.muted) unmute(); else video.muted = true;
   });
 
@@ -860,7 +739,8 @@
   video.addEventListener("play", syncControls);
   video.addEventListener("pause", syncControls);
 
-  /* Left to right along the rail, matching the visual order. */
+  /* Left to right along the rail, matching the visual order. A WebView will
+     not reliably do spatial navigation by itself, so the walk is explicit. */
   var CTRLS = [sBtn, qBtn, playBtn, muteBtn, fsBtn];
   function liveCtrls(){
     return CTRLS.filter(function(b){ return b && !b.disabled && b.offsetParent !== null; });
@@ -883,12 +763,9 @@
 
   if(isTv){
     body.classList.add("tv");
-    /* The system video controls cannot be driven by a remote and swallow the
-       D-pad while they are on screen. The rail replaces them. */
-    try{
-      video.removeAttribute("controls");
-      video.tabIndex = -1;
-    }catch(e){}
+    /* System video controls cannot be driven by a remote and swallow the D-pad
+       while on screen. The rail replaces them. */
+    try{ video.removeAttribute("controls"); video.tabIndex = -1; }catch(e){}
     setCinema(true);
   }
   syncControls();
@@ -925,22 +802,17 @@
     });
     sName.textContent = s.name;
 
-    /* Switching is a deliberate restart, not a failure. Clear the backoff
-       ladder so it reconnects at once, and drop the native src as well —
-       otherwise Safari keeps decoding the previous feed underneath. */
+    /* A deliberate restart, not a failure: clear the backoff ladder, and drop
+       the native src too or Safari keeps decoding the old feed underneath. */
     retryCount = 0; netRecovery = 0; mediaRecovery = 0;
     clearTimeout(retryTimer); clearInterval(countdownTimer);
     destroyHls();
-    try{
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    }catch(e){}
+    try{ video.pause(); video.removeAttribute("src"); video.load(); }catch(e){}
     playHls();
   }
   buildSourceMenu();
 
-  /* ---------- Quality selector, built from real manifest levels ---------- */
+  /* ---------- Quality, built from real manifest levels ---------- */
   function levelLabel(l){ return l.height ? (l.height + "p") : (Math.round((l.bitrate || 0) / 1000) + "k"); }
   function levelBadge(l){ return l.height >= 1080 ? "FHD" : (l.height >= 720 ? "HD" : ""); }
   function rateLabel(bps){
@@ -970,12 +842,13 @@
     qBtn.disabled = true;
     qBtn.title = "选择画质";
     qMode.textContent = (prefQuality === "auto") ? "自动" : (prefQuality + "p");
+    qRes.textContent = "—";
     qSrc.textContent = "自适应";
     qFoot.hidden = true;
   }
-  /* skipApply is used when the ladder itself changed underneath us: the list
-     must be redrawn, but the stored preference must not be re-resolved, or a
-     rung the player has just given up on would be requested all over again. */
+  /* skipApply is for when the ladder changed underneath us: redraw the list,
+     but do not re-resolve the preference, or a rung the player has just given
+     up on would be requested all over again. */
   function buildQualityMenu(skipApply){
     if(!hls || !hls.levels || !hls.levels.length){ resetQuality(); return; }
     var idxs = hls.levels.map(function(l, i){ return i; }).sort(function(a, b){
@@ -988,7 +861,7 @@
       var l = hls.levels[i], h = l.height || 0;
       if(seen[h]) return;
       seen[h] = 1;
-      heightIndex[h] = i; // the canonical rung for this height
+      heightIndex[h] = i;
       html += itemHtml(String(i), levelLabel(l), levelBadge(l), rateLabel(l.bitrate));
     });
     qList.innerHTML = html;
@@ -1008,7 +881,7 @@
           applyLevel(idx);
           savePref(lv && lv.height ? String(lv.height) : "auto");
         }
-        measuredBps = 0; // the rung changed; start the average over
+        measuredBps = 0;
         setActiveQuality(v);
         closeQMenu();
         qBtn.focus();
@@ -1023,10 +896,8 @@
     }
   }
 
-  /* A pick is a lock; -1 hands control back to the adaptive ladder.
-     soft=true switches at the next fragment boundary instead of immediately,
-     which matters when re-asserting a lock: an immediate switch discards the
-     buffer, and discarding the buffer is the very thing that was hurting. */
+  /* A pick is a lock; -1 hands control back to the ladder. soft=true switches
+     at the next fragment boundary instead of discarding the buffer. */
   function applyLevel(idx, soft){
     if(!hls) return;
     try{
@@ -1035,7 +906,6 @@
       if(idx >= 0) hls.startLevel = idx;
     }catch(e){}
   }
-
   function indexForHeight(h){
     if(!hls || !hls.levels) return -1;
     for(var i = 0; i < hls.levels.length; i++){
@@ -1048,22 +918,14 @@
     return l ? (l.height || 0) : 0;
   }
 
-  /* ---------- Holding an explicit pick ----------
-     hls.js keeps its own escape hatch from a manual lock: when a level's
-     fragments repeatedly time out it penalises or removes that level and
-     switches away to keep something on screen. That is reasonable library
-     behaviour, but it silently overrides a stated choice, and it lands on the
-     bottom rung rather than one step down.
-
-     So the choice is re-asserted — at most three times, with widening gaps,
-     and only ever back to the rung that was asked for. It never lowers
-     anything by itself and it measures nothing, so it cannot spiral the way an
-     earlier bitrate guard did. When the attempts run out it stops and says so
-     rather than fighting the network in a loop. */
+  /* hls.js keeps its own escape hatch from a manual lock: a level whose
+     fragments keep failing is penalised and abandoned, which silently
+     overrides a stated choice and lands on the bottom rung. So the choice is
+     re-asserted, at most three times with widening gaps, and only ever back to
+     the rung that was asked for. It never lowers anything by itself. */
   function enforceLock(){
     if(lockedHeight == null || !hls) return;
     var now = activeHeight();
-
     if(now === lockedHeight){
       clearRelock();
       qMode.textContent = lockedHeight + "p";
@@ -1071,18 +933,15 @@
       qFoot.hidden = false;
       return;
     }
-
     /* The label must never claim a rung we are not on. */
     qBtn.classList.add("fallen");
     qMode.textContent = lockedHeight + "p → " + (now ? (now + "p") : "—");
     qFoot.hidden = false;
-
     if(indexForHeight(lockedHeight) < 0 || relockTries >= RELOCK_DELAYS.length){
       qFoot.textContent = LOCK_LOST;
       return;
     }
     qFoot.textContent = LOCK_RETRY;
-
     clearTimeout(relockTimer);
     relockTimer = setTimeout(function(){
       relockTimer = null;
@@ -1092,8 +951,8 @@
     }, RELOCK_DELAYS[relockTries++]);
   }
 
-  /* Resolve a remembered height against the ladder this feed actually offers:
-     exact match first, then the best rung at or below it, then auto. */
+  /* Resolve a remembered height against the ladder this feed offers: exact
+     match, then the best rung at or below it, then auto. */
   function applyPreferredLevel(){
     clearRelock();
     if(prefQuality === "auto"){
@@ -1114,7 +973,6 @@
     for(i = 0; i < heights.length; i++){ if(heights[i] === want){ pick = heights[i]; break; } }
     if(pick < 0){ for(i = 0; i < heights.length; i++){ if(heights[i] <= want){ pick = heights[i]; break; } } }
     if(pick < 0){ lockedHeight = null; applyLevel(-1); setActiveQuality("auto"); return; }
-
     lockedHeight = pick;
     applyLevel(heightIndex[pick]);
     measuredBps = 0;
@@ -1138,22 +996,21 @@
     }
     updateActiveRate();
   }
-  /* On the auto row, report which rung the ladder has actually settled on —
-     otherwise "自动" tells you nothing about what you are watching. */
+  /* On the auto row, report the rung the ladder has actually settled on. */
   function updateActiveRate(){
+    var lv = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
+    qRes.textContent = lv ? ((lv.width || "?") + "×" + (lv.height || "?")) : "—";
     var row = qList.querySelector('.q-item[aria-selected="true"]');
     if(!row) return;
     var cell = row.querySelector(".q-rate");
     if(!cell) return;
     if(row.dataset.level !== "auto") return;
-    var lv = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
     cell.textContent = lv ? ("当前 " + levelLabel(lv)) : "";
   }
 
   /* ---------- Live edge ----------
-     hls.latency is the real distance from the live edge. liveSyncPosition is
-     only our own playback target, so measuring against it reports drift, not
-     latency, and always looks flatteringly small. */
+     hls.latency is the real distance from the live edge; liveSyncPosition is
+     only our own target, so measuring against it reports drift, not latency. */
   function targetLatency(){
     var t = hls && hls.targetLatency;
     return (typeof t === "number" && t > 0) ? t : 20;
@@ -1164,8 +1021,8 @@
     if(b && b.length) return Math.max(0, b.end(b.length - 1) - video.currentTime);
     return NaN;
   }
-  /* Seconds of playable video still ahead of the playhead. This is the
-     number that predicts a stall; latency does not. */
+  /* Seconds of playable video ahead of the playhead. This is what predicts a
+     stall; latency does not. */
   function bufferAhead(){
     var b = video.buffered, t = video.currentTime;
     if(!b) return NaN;
@@ -1190,9 +1047,7 @@
   /* ---------- Playback ---------- */
   function playHls(){
     clearTimeout(retryTimer); clearInterval(countdownTimer);
-
     if(window.Hls) return startPlayback();
-
     showLoading(retryCount === 0 ? "正在加载播放组件…" : "正在重新加载播放组件…");
     var wait = window.__hlsReady || function(cb){ cb(false); };
     wait(function(ok){
@@ -1219,66 +1074,41 @@
       hls = new window.Hls({
         enableWorker: true,
 
-        /* Media behind the playhead occupies the same SourceBuffer quota as
-           media ahead of it, and that quota is far smaller inside an embedded
-           WebView than in a desktop browser. Keeping less history leaves more
-           room for the only part that can prevent a stall. */
+        /* Media behind the playhead shares the SourceBuffer quota with media
+           ahead of it, and that quota is much smaller inside a WebView. */
         backBufferLength: 15,
 
-        /* Live sync, in seconds rather than in fragments.
-
-           This is the fix for a real defect. The previous revision expressed
-           the sync target as a fragment count, which only means something if
-           you know how long a fragment is — and this playlist's segment
-           length is not knowable from here. Six fragments of ten seconds is a
-           sixty second target, so a session sitting fifty seconds behind the
-           live edge was, as far as the player was concerned, comfortably
-           early: no catch up, no corrective seek, and a latency that simply
-           never came back. Measured: buffer 30s, latency 51.5s, with the
-           catch up mechanism idle the whole time.
-
-           Seconds are unambiguous. Eighteen seconds of target is still two or
-           three whole segments of cushion on any plausible segment length,
-           and thirty is close enough behind it that genuine drift trips a
-           seek instead of being tolerated indefinitely.
-
-           Note that these two supersede liveSyncDurationCount and
-           liveMaxLatencyDurationCount entirely, which is why those are gone
-           rather than merely retuned. */
+        /* Live sync in seconds, not fragments. A fragment count means nothing
+           without knowing the segment length, and this playlist's length is
+           not knowable here: six fragments of ten seconds is a sixty second
+           target, so a session fifty seconds behind looked comfortably early
+           and neither the catch up nor the corrective seek ever fired.
+           Measured before this change: buffer 30s, latency 51.5s.
+           These two supersede the *DurationCount options entirely. */
         lowLatencyMode: false,
         liveSyncDuration: 18,
         liveMaxLatencyDuration: 30,
 
-        /* Catch up gently. At 1.1 roughly six seconds is recovered per minute,
-           which closes an ordinary overshoot in about a minute without the
-           picture or the audio pitch giving it away. Setting this to exactly 1
-           removes the mechanism altogether; setting it to 1.3, as an early
-           revision did, eats the cushion faster than the network refills it. */
+        /* Catch up gently: about six seconds recovered per minute. Exactly 1
+           removes the mechanism; 1.3 eats the cushion faster than the network
+           refills it. */
         maxLiveSyncPlaybackRate: 1.1,
         liveDurationInfinity: true,
 
-        /* Buffer well ahead, without asking the WebView for a quota it will
-           refuse and then evict its way out of. */
         maxBufferLength: 40,
         maxMaxBufferLength: 60,
         maxBufferHole: 0.5,
         nudgeMaxRetry: 10,
 
-        /* ABR, biased towards holding a picture rather than maximising one.
-           An earlier revision seeded the estimate at 2.5 Mbps and skipped the
-           startup probe, so the player opened near the top of the ladder
-           before it had measured anything; over a tunnel that is wrong in the
-           expensive direction. These three lean the other way: start low, and
-           demand real headroom before climbing a rung. They only bias the
-           library's own decision — an explicit pick still overrides them
-           completely. */
+        /* ABR biased towards holding a picture rather than maximising one:
+           start low, and demand real headroom before climbing a rung. An
+           explicit pick still overrides all of it. */
         abrEwmaDefaultEstimate: 600000,
         abrBandWidthFactor: 0.8,
         abrBandWidthUpFactor: 0.5,
         startFragPrefetch: true,
 
-        /* Retry a slow segment rather than tearing the session down: on a long
-           path a single lost fragment is normal, not fatal. */
+        /* Retry a slow segment rather than tearing the session down. */
         manifestLoadingTimeOut: 8000,
         manifestLoadingMaxRetry: 3,
         manifestLoadingRetryDelay: 500,
@@ -1300,20 +1130,14 @@
       hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){
         measuredBps = 0;
         updateActiveRate();
-        /* The player may have moved off an explicit pick on its own. Report
-           the truth first, then decide whether to ask for it back. */
         enforceLock();
       });
-      /* Fired when the ladder itself changes — typically because a level that
-         kept failing was removed. Redraw the list so it cannot offer a rung
-         that no longer exists, and let enforceLock report the consequence. */
       if(window.Hls.Events.LEVELS_UPDATED){
         hls.on(window.Hls.Events.LEVELS_UPDATED, function(){ buildQualityMenu(true); });
       }
       hls.on(window.Hls.Events.FRAG_BUFFERED, function(_e, d){
         netRecovery = 0; mediaRecovery = 0;
-        /* Real encoded bitrate: bytes actually delivered for this fragment,
-           divided by the media time it covers. Smoothed so it reads steadily. */
+        /* Real encoded bitrate: bytes delivered divided by media time covered. */
         try{
           var st = d && d.stats, dur = d && d.frag && d.frag.duration;
           var bytes = st ? (st.total || st.loaded) : 0;
@@ -1326,14 +1150,13 @@
       });
       hls.on(window.Hls.Events.ERROR, onHlsError);
     } else if(nativeOk()){
-      /* Fallback only: the system decoder exposes no level list, so the control
-         becomes a readout and latency is whatever the OS player decides. */
+      /* Fallback only: the system decoder exposes no level list. */
       qMode.textContent = "系统解码";
       qBtn.title = "当前由系统直接解码 HLS，不提供可选清晰度列表";
       var mySrc = streamUrl();
       video.src = mySrc;
       video.addEventListener("loadedmetadata", function(){
-        if(video.src !== mySrc) return; // a source switch superseded this load
+        if(video.src !== mySrc) return;
         retryCount = 0; clearState(); video.play().catch(noop); showHint();
       }, {once:true});
       video.addEventListener("error", function(){
@@ -1346,8 +1169,8 @@
     }
   }
 
-  /* A fatal error is not always terminal: hls.js can reattach the loader or
-     flush the buffer in place. Try both twice before tearing everything down. */
+  /* A fatal error is not always terminal: reattach the loader or flush the
+     buffer in place, twice each, before tearing everything down. */
   function onHlsError(_evt, data){
     if(!data || !data.fatal) return;
     var T = window.Hls.ErrorTypes;
@@ -1384,13 +1207,201 @@
   screenEl.addEventListener("click", unmute);
 
   /* ---------- Keyboard and remote ----------
-     A television remote arrives here as arrow keys plus Enter, so the arrows
-     have to do something useful at the document level: wake the chrome, then
-     walk along the rail. Enter activates a focused button on its own, and only
-     needs handling when nothing is focused yet. */
+     A remote arrives here as arrow keys plus Enter, so the arrows have to do
+     something useful at the document level: wake the chrome, then walk the
+     rail. Enter activates a focused button by itself and only needs handling
+     when nothing is focused. */
   document.addEventListener("keydown", function(e){
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
     wake();
 
-    
+    /* An open menu owns the keyboard; it has its own handler. */
+    if(!qMenu.hidden || !sMenu.hidden){
+      if(k === "escape"){ closeAllMenus(); }
+      return;
+    }
+
+    var tag = (document.activeElement && document.activeElement.tagName) || "";
+    var onButton = (tag === "BUTTON" || tag === "A" || tag === "INPUT");
+
+    if(k === "arrowleft" || k === "arrowright"){
+      e.preventDefault();
+      moveFocus(k === "arrowright" ? 1 : -1);
+      return;
+    }
+    if(k === "arrowdown"){ e.preventDefault(); focusRail(); return; }
+    if(k === "arrowup"){
+      e.preventDefault();
+      if(document.activeElement === liveBtn) focusRail(); else liveBtn.focus();
+      return;
+    }
+    if(k === "enter"){
+      if(onButton) return; // the button handles it
+      e.preventDefault();
+      focusRail();
+      return;
+    }
+    if(k === "escape"){
+      if(inCinema() && !isTv){ setCinema(false); exitFs(); }
+      return;
+    }
+    if(k === " " || k === "spacebar" || k === "k" || k === "mediaplaypause"){
+      if(onButton && k !== "mediaplaypause") return;
+      e.preventDefault();
+      if(video.paused) video.play().catch(noop); else video.pause();
+      return;
+    }
+    if(k === "m"){ if(video.muted) unmute(); else video.muted = true; return; }
+    if(k === "f"){ toggleFullscreen(); return; }
+    if(k === "l"){ jumpToLive(); return; }
+    if(k === "s"){ e.preventDefault(); openMenu(sBtn, sMenu, sList); return; }
+  });
+
+  /* ---------- Telemetry ----------
+     The latency figure is meaningless without the target it is judged
+     against, which is exactly how a sixty second target went unnoticed. The
+     tooltip now carries the target, the measured segment length and the
+     current playback rate. */
+  setInterval(function(){
+    if(video.style.display === "none") return;
+
+    var lv = (hls && hls.levels && hls.currentLevel >= 0) ? hls.levels[hls.currentLevel] : null;
+    var bps = measuredBps || (lv ? lv.bitrate : 0);
+    statRate.textContent = bps
+      ? ("码率 " + (bps >= 1000000 ? (Math.round(bps / 100000) / 10 + " Mbps")
+                                     : (Math.round(bps / 1000).toLocaleString() + " kbps")))
+      : "码率 —";
+
+    var buf = bufferAhead();
+    statBuf.textContent = isFinite(buf) ? ("缓冲 " + buf.toFixed(1) + "s") : "缓冲 —";
+    statBuf.classList.toggle("thin", isFinite(buf) && buf < 4);
+
+    var l = latency(), t = targetLatency();
+    statLat.textContent = isFinite(l) ? ("延迟 " + l.toFixed(1) + "s") : "延迟 —";
+    statLat.classList.toggle("catching", video.playbackRate > 1.01);
+    var tip = "当前画面距离直播边缘的真实时间差\n目标 " + t.toFixed(1) + "s";
+    if(fragSecs) tip += "\n分片时长 " + fragSecs.toFixed(1) + "s";
+    tip += "\n倍速 " + video.playbackRate.toFixed(2) + "×";
+    statLat.title = tip;
+
+    var behind = isFinite(l) && l > t + 8;
+    liveBtn.classList.toggle("behind", behind);
+    liveTxt.textContent = behind ? "回到直播" : "LIVE";
+
+    updateActiveRate();
+  }, 1000);
+
+  /* Coming back to a backgrounded tab, the picture can be far behind. */
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden) return;
+    var l = latency();
+    if(isFinite(l) && l > targetLatency() + 10) jumpToLive();
+  });
+
+  /* ---------- Clocks and market sessions ----------
+     Minutes from local midnight in each market's own zone. Holiday calendars
+     are not modelled, so a public holiday still reads as an open session. */
+  var MARKETS = [
+    {code:"NYSE",  zone:"America/New_York",  zones:["America/New_York","America/Toronto","America/Detroit","America/Chicago","America/Denver","America/Phoenix","America/Los_Angeles"], pre:[240,570],  open:[[570,960]],           post:[960,1200]},
+    {code:"LSE",   zone:"Europe/London",     zones:["Europe/London","Europe/Dublin","Europe/Lisbon"],                                                                              pre:[420,480],  open:[[480,990]],           post:[990,1035]},
+    {code:"XETRA", zone:"Europe/Berlin",     zones:["Europe/Berlin","Europe/Paris","Europe/Madrid","Europe/Rome","Europe/Amsterdam","Europe/Zurich","Europe/Brussels","Europe/Vienna","Europe/Stockholm","Europe/Oslo","Europe/Copenhagen","Europe/Warsaw","Europe/Prague"], pre:[480,540], open:[[540,1050]], post:[1050,1110]},
+    {code:"SSE",   zone:"Asia/Shanghai",     zones:["Asia/Shanghai","Asia/Chungking","Asia/Chongqing","Asia/Harbin","Asia/Urumqi"],                                                pre:[555,570],  open:[[570,690],[780,900]], post:[900,930]},
+    {code:"HKEX",  zone:"Asia/Hong_Kong",    zones:["Asia/Hong_Kong","Asia/Macau"],                                                                                                pre:[540,570],  open:[[570,720],[780,960]], post:[960,975]},
+    {code:"TWSE",  zone:"Asia/Taipei",       zones:["Asia/Taipei"],                                                                                                                pre:[510,540],  open:[[540,810]],           post:null},
+    {code:"TSE",   zone:"Asia/Tokyo",        zones:["Asia/Tokyo"],                                                                                                                 pre:[480,540],  open:[[540,690],[750,930]], post:null},
+    {code:"KRX",   zone:"Asia/Seoul",        zones:["Asia/Seoul","Asia/Pyongyang"],                                                                                                pre:[480,540],  open:[[540,930]],           post:[930,1080]},
+    {code:"SGX",   zone:"Asia/Singapore",    zones:["Asia/Singapore","Asia/Kuala_Lumpur","Asia/Jakarta","Asia/Manila","Asia/Bangkok","Asia/Ho_Chi_Minh"],                           pre:[480,540],  open:[[540,1020]],          post:null},
+    {code:"NSE",   zone:"Asia/Kolkata",      zones:["Asia/Kolkata","Asia/Calcutta","Asia/Colombo","Asia/Karachi","Asia/Dhaka"],                                                    pre:[540,555],  open:[[555,930]],           post:null},
+    {code:"DFM",   zone:"Asia/Dubai",        zones:["Asia/Dubai","Asia/Riyadh","Asia/Qatar","Asia/Kuwait","Asia/Tehran","Asia/Jerusalem","Europe/Istanbul","Europe/Moscow"],        pre:[570,600],  open:[[600,870]],           post:null},
+    {code:"ASX",   zone:"Australia/Sydney",  zones:["Australia/Sydney","Australia/Melbourne","Australia/Brisbane","Australia/Perth","Pacific/Auckland"],                            pre:[420,600],  open:[[600,960]],           post:[960,1020]}
+  ];
+
+  var partsFmts = {};
+  function fmtFor(zone){
+    if(!partsFmts[zone]){
+      partsFmts[zone] = new Intl.DateTimeFormat("en-GB", {
+        timeZone: zone, hour12: false, weekday: "short",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      });
+    }
+    return partsFmts[zone];
+  }
+  function zoneNow(zone){
+    try{
+      var o = {};
+      fmtFor(zone).formatToParts(new Date()).forEach(function(p){ o[p.type] = p.value; });
+      var h = parseInt(o.hour, 10) % 24, m = parseInt(o.minute, 10);
+      return {text: (h < 10 ? "0" + h : h) + ":" + o.minute + ":" + o.second, mins: h * 60 + m, day: o.weekday};
+    }catch(e){
+      return {text: "--:--:--", mins: -1, day: ""};
+    }
+  }
+  function within(range, m){ return !!range && m >= range[0] && m < range[1]; }
+  function marketFor(zone){
+    for(var i = 0; i < MARKETS.length; i++){
+      if(MARKETS[i].zones.indexOf(zone) >= 0) return MARKETS[i];
+    }
+    return null;
+  }
+  function sessionOf(zone){
+    var mk = marketFor(zone);
+    if(!mk) return {t:"—", c:"off"};
+    var n = zoneNow(mk.zone);
+    if(n.mins < 0) return {t:"—", c:"off"};
+    if(n.day === "Sat" || n.day === "Sun") return {t:"周末休市", c:"off"};
+    for(var i = 0; i < mk.open.length; i++){
+      if(within(mk.open[i], n.mins)) return {t:"开盘", c:"on"};
+    }
+    if(mk.open.length > 1 && n.mins >= mk.open[0][1] && n.mins < mk.open[1][0]) return {t:"午间休市", c:"off"};
+    if(within(mk.pre, n.mins))  return {t:"盘前", c:"pre"};
+    if(within(mk.post, n.mins)) return {t:"盘后", c:"pre"};
+    return {t:"收盘", c:"off"};
+  }
+
+  var localZone = "UTC";
+  try{ localZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; }catch(e){}
+  var localTzEl = document.getElementById("localTz");
+  localTzEl.textContent = (localZone.split("/").pop() || "LOCAL").replace(/_/g, " ").toUpperCase();
+
+  var COLUMNS = [
+    {box:"clockLondon", time:"londonTime", ses:"londonSession", zone:"Europe/London"},
+    {box:"clockNy",     time:"nyTime",     ses:"session",       zone:"America/New_York"},
+    {box:"clockHk",     time:"hkTime",     ses:"hkSession",     zone:"Asia/Hong_Kong"},
+    {box:"clockSeoul",  time:"seoulTime",  ses:"seoulSession",  zone:"Asia/Seoul"},
+    {box:"clockLocal",  time:"localTime",  ses:"localSession",  zone:localZone}
+  ];
+  COLUMNS.forEach(function(c){
+    c.boxEl  = document.getElementById(c.box);
+    c.timeEl = document.getElementById(c.time);
+    c.sesEl  = document.getElementById(c.ses);
+  });
+
+  /* A local column that repeats a fixed one is noise, so it is hidden. */
+  (function(){
+    var dup = false;
+    for(var i = 0; i < 4; i++){ if(COLUMNS[i].zone === localZone) dup = true; }
+    if(dup) COLUMNS[4].boxEl.hidden = true;
+  })();
+
+  /* Ordered by real UTC offset rather than by markup order, so the row always
+     reads west to east. Decorate, sort, undecorate with an index tiebreaker,
+     because Array#sort stability is not guaranteed everywhere and two columns
+     can share an offset exactly. */
+  (function(){
+    function offsetMinutes(zone){
+      try{
+        var p = new Intl.DateTimeFormat("en-US", {timeZone: zone, timeZoneName: "longOffset"})
+          .formatToParts(new Date())
+          .filter(function(x){ return x.type === "timeZoneName"; })[0];
+        var m = p && /GMT([+-])(\d{1,2}):?(\d{2})?/.exec(p.value);
+        if(m) return (m[1] === "-" ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3] || "0", 10));
+      }catch(e){}
+      return 0;
+    }
+    var decorated = COLUMNS.map(function(c, i){ return {c:c, i:i, off:offsetMinutes(c.zone)}; });
+    decorated.sort(function(a, b){ return (a.off - b.off) || (a.i - b.i); });
+    decorated.forEach(function(d, order){ d.c.boxEl.style.order = String(order); });
+  })();
+
+  function tickCl
