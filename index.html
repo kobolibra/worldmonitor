@@ -372,6 +372,8 @@
     <button class="live" id="liveBtn" type="button" title="回到直播边缘（L）">
       <span class="dot" aria-hidden="true"></span><span id="liveTxt">LIVE</span>
     </button>
+    <!-- The three columns are ordered at runtime by real UTC offset, so the
+         source order here is not the display order. -->
     <div class="clocks">
       <div class="clock" id="clockLondon">
         <span class="tz">LONDON</span>
@@ -1282,12 +1284,12 @@
     if(!mkt) return {t:"—", c:"off"};
     var p = zoneNow(mkt.zone), m = p.mins, i;
     if(p.wd === "Sat" || p.wd === "Sun") return {t:"周末休市", c:"off"};
-    for(i = 0; i < mkt.open.length; i++){ if(within(mkt.open[i], m)) return {t:"开市", c:"on"}; }
+    for(i = 0; i < mkt.open.length; i++){ if(within(mkt.open[i], m)) return {t:"开盘", c:"on"}; }
     /* The gap between two trading segments is a lunch break, not a close. */
     if(mkt.open.length > 1 && m >= mkt.open[0][1] && m < mkt.open[1][0]) return {t:"午间休市", c:"off"};
     if(within(mkt.pre, m))  return {t:"盘前", c:"pre"};
     if(within(mkt.post, m)) return {t:"盘后", c:"pre"};
-    return {t:"休市", c:"off"};
+    return {t:"收盘", c:"off"};
   }
 
   var localZone = "";
@@ -1321,6 +1323,31 @@
     }
     var label = document.getElementById("localTz");
     if(label) label.textContent = localZone.split("/").pop().replace(/_/g, " ").toUpperCase();
+  })();
+
+  /* Left to right in true east-bound order, the way a trading day actually
+     travels: the zone furthest behind UTC sits first and the one furthest
+     ahead sits last. Computed from the live offset rather than hard-coded, so
+     it stays right through daylight saving and through whatever zone the
+     viewer is actually in. */
+  (function(){
+    function offsetMinutes(zone){
+      try{
+        var d = new Date();
+        var f = new Intl.DateTimeFormat("en-US", zone
+          ? {timeZone:zone, hourCycle:"h23", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit"}
+          : {hourCycle:"h23", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit"});
+        var o = {};
+        f.formatToParts(d).forEach(function(x){ o[x.type] = x.value; });
+        var asUTC = Date.UTC(+o.year, (+o.month) - 1, +o.day, (+o.hour) % 24, +o.minute, +o.second);
+        return Math.round((asUTC - d.getTime()) / 60000);
+      }catch(e){ return 0; }
+    }
+    COLUMNS.slice().sort(function(a, b){
+      return offsetMinutes(a.zone) - offsetMinutes(b.zone);
+    }).forEach(function(c, i){
+      if(c.wrapEl) c.wrapEl.style.order = String(i);
+    });
   })();
 
   function tickClocks(){
