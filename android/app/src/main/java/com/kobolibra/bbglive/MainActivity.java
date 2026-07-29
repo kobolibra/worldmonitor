@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
@@ -73,6 +74,15 @@ public class MainActivity extends Activity {
 		s.setDisplayZoomControls(false);
 		s.setTextZoom(100);
 		s.setCacheMode(WebSettings.LOAD_DEFAULT);
+
+		// The manifest already disables Safe Browsing, but some vendor WebView
+		// builds only honour it as a per instance setting, so both are set. The
+		// check blocks the load on a reply from a Google service that is not
+		// reachable here, and the page being loaded is a static file we publish
+		// ourselves, so there is nothing for it to protect against.
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+			s.setSafeBrowsingEnabled(false);
+		}
 
 		web.setWebViewClient(new WebViewClient() {
 			@Override

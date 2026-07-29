@@ -22,6 +22,20 @@
 		android:theme="@style/AppTheme"
 		android:usesCleartextTraffic="false">
 
+		<!-- WebView checks every page against a Google Safe Browsing service
+		     before it will load it, and waits for the reply. That service is
+		     not reachable on the networks this app is used on, so the check
+		     only ever contributes a timeout. The page it loads is a static
+		     file in this repository, so there is nothing to protect against. -->
+		<meta-data
+			android:name="android.webkit.WebView.EnableSafeBrowsing"
+			android:value="false" />
+
+		<!-- Same reasoning: the metrics endpoint is unreachable here too. -->
+		<meta-data
+			android:name="android.webkit.WebView.MetricsOptOut"
+			android:value="true" />
+
 		<activity
 			android:name=".MainActivity"
 			android:exported="true"
