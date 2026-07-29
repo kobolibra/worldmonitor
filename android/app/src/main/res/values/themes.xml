@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 	<style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
-		<!-- Matches the page's own --bg, so the launch window does not flash
-		     white before the WebView paints. -->
+		<!-- Matches the page's own background colour, so the launch window does
+		     not flash white before the WebView paints. -->
 		<item name="android:windowBackground">@color/backdrop</item>
 		<item name="android:colorBackground">@color/backdrop</item>
 		<item name="android:navigationBarColor">@android:color/black</item>
