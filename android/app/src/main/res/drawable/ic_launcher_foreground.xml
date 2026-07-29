@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A capital B, drawn as two D shaped bowls over a common stem, with the two
-     counters punched back out in the plate colour. Everything sits inside the
-     18..90 safe zone so no launcher mask can clip it. -->
+<!--
+	A capital B in the grotesque style the Bloomberg wordmark uses: narrow,
+	flat vertical right side on each bowl, tight corner curves rather than
+	semicircles, a smaller upper bowl, and squarish counters punched back out
+	in the plate colour. Cap height runs 26 to 82 on the 108 unit grid, stem
+	width 12, every horizontal stroke 9, all inside the 18 to 90 safe zone.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
 	android:width="108dp"
 	android:height="108dp"
@@ -10,17 +14,15 @@
 
 	<path
 		android:fillColor="#FFFFFF"
-		android:pathData="M35.5,26 H54.5 A13,13 0 0 1 54.5,52 H35.5 Z" />
-
+		android:pathData="M36,26 H54 A12,12 0 0 1 66,38 V46 A12,12 0 0 1 54,58 H36 Z" />
 	<path
 		android:fillColor="#FFFFFF"
-		android:pathData="M35.5,52 H57.5 A15,15 0 0 1 57.5,82 H35.5 Z" />
+		android:pathData="M36,50 H57 A13,13 0 0 1 70,63 V69 A13,13 0 0 1 57,82 H36 Z" />
 
 	<path
 		android:fillColor="#0A0C0F"
-		android:pathData="M45.5,34 H54.5 A5,5 0 0 1 54.5,44 H45.5 Z" />
-
+		android:pathData="M48,35 H51 A5.5,5.5 0 0 1 56.5,40.5 V43.5 A5.5,5.5 0 0 1 51,49 H48 Z" />
 	<path
 		android:fillColor="#0A0C0F"
-		android:pathData="M45.5,60 H57.5 A7,7 0 0 1 57.5,74 H45.5 Z" />
+		android:pathData="M48,58 H54 A6,6 0 0 1 60,64 V67 A6,6 0 0 1 54,73 H48 Z" />
 </vector>

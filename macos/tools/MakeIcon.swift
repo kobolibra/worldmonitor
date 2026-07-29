@@ -3,10 +3,12 @@ import Cocoa
 // Draws the launcher icon at every size macOS asks for, so the repository does
 // not have to carry binary image assets that nobody can review in a diff.
 //
-// The mark is a capital B built from two D shaped bowls sharing a stem, with
-// the counters punched back out in the plate colour. The geometry is written in
-// the same 108 unit grid the Android adaptive icon uses, so the two platforms
-// ship the identical shape.
+// The mark is a capital B in the grotesque style the Bloomberg wordmark uses:
+// narrow, with a flat vertical right side on each bowl, tight corner curves
+// rather than semicircles, a smaller upper bowl, and squarish counters punched
+// back out in the plate colour. The geometry is written in the same 108 unit
+// grid the Android adaptive icon uses, so the two platforms ship the identical
+// shape.
 
 let iconBackground = NSColor(srgbRed: 0x0A / 255.0, green: 0x0C / 255.0, blue: 0x0F / 255.0, alpha: 1)
 let markColor = NSColor.white
@@ -49,26 +51,38 @@ func renderPNG(pixels: Int) -> Data? {
 	func gx(_ v: CGFloat) -> CGFloat { inset + v * s }
 	func gy(_ v: CGFloat) -> CGFloat { inset + (108 - v) * s }
 
-	// A flat left edge with a semicircular right edge, in design coordinates.
-	func bowl(left: CGFloat, top: CGFloat, flatRight: CGFloat, bottom: CGFloat) -> NSBezierPath {
+	// A rectangle in design coordinates whose two right corners are rounded.
+	// A radius well below half the height is what keeps the letter grotesque
+	// instead of geometric: the right side stays vertical between the curves.
+	func rrect(x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat, r: CGFloat) -> NSBezierPath {
 		let path = NSBezierPath()
-		let radius = (bottom - top) / 2 * s
-		let centre = NSPoint(x: gx(flatRight), y: gy((top + bottom) / 2))
-		path.move(to: NSPoint(x: gx(left), y: gy(bottom)))
-		path.line(to: NSPoint(x: gx(flatRight), y: gy(bottom)))
-		path.appendArc(withCenter: centre, radius: radius, startAngle: -90, endAngle: 90)
-		path.line(to: NSPoint(x: gx(left), y: gy(top)))
+		let radius = r * s
+		let topRight = NSPoint(x: gx(x1 - r), y: gy(y0 + r))
+		let bottomRight = NSPoint(x: gx(x1 - r), y: gy(y1 - r))
+		path.move(to: NSPoint(x: gx(x0), y: gy(y0)))
+		path.line(to: NSPoint(x: gx(x1 - r), y: gy(y0)))
+		path.appendArc(
+			withCenter: topRight, radius: radius,
+			startAngle: 90, endAngle: 0, clockwise: true)
+		path.line(to: NSPoint(x: gx(x1), y: gy(y1 - r)))
+		path.appendArc(
+			withCenter: bottomRight, radius: radius,
+			startAngle: 0, endAngle: -90, clockwise: true)
+		path.line(to: NSPoint(x: gx(x0), y: gy(y1)))
 		path.close()
 		return path
 	}
 
+	// Cap height 26 to 82, stem width 12, every horizontal stroke 9 thick.
+	// The lower bowl reaches further right than the upper one, as it does in
+	// the real letter.
 	markColor.setFill()
-	bowl(left: 35.5, top: 26, flatRight: 54.5, bottom: 52).fill()
-	bowl(left: 35.5, top: 52, flatRight: 57.5, bottom: 82).fill()
+	rrect(x0: 36, y0: 26, x1: 66, y1: 58, r: 12).fill()
+	rrect(x0: 36, y0: 50, x1: 70, y1: 82, r: 13).fill()
 
 	iconBackground.setFill()
-	bowl(left: 45.5, top: 34, flatRight: 54.5, bottom: 44).fill()
-	bowl(left: 45.5, top: 60, flatRight: 57.5, bottom: 74).fill()
+	rrect(x0: 48, y0: 35, x1: 56.5, y1: 49, r: 5.5).fill()
+	rrect(x0: 48, y0: 58, x1: 60, y1: 73, r: 6).fill()
 
 	return rep.representation(using: .png, properties: [:])
 }
