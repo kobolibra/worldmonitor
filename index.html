@@ -974,24 +974,29 @@
 
         /* Live sync, deliberately conservative.
 
-           The measurement that drove this: 1.7s of buffer against 11.5s of
-           latency. Those two numbers together mean roughly ten seconds of
-           already-published media had not been fetched yet — delivery was
-           only just keeping pace with playback, with no reserve at all, so
-           every hiccup landed straight on the picture.
+           Sitting six fragments back is what finally produced a real cushion:
+           measured on the nearest origin, twenty seconds of buffer instead of
+           the one or two that used to be there. This playlist carries no
+           LL-HLS parts, so there was never anything to win by hugging the
+           edge.
 
-           This playlist carries no LL-HLS parts, so there was never anything
-           to win by sitting close to the edge. Six fragments back is the same
-           broadcast a few seconds later with several times the room to absorb
-           a late segment. */
+           The tolerance below is the other half of that. An earlier revision
+           set it so wide that a single stall could leave the playhead a full
+           minute behind and nothing would ever pull it forward again — the
+           session simply stayed late for as long as it ran. Twelve fragments
+           is comfortably more than the sync target, so ordinary jitter is
+           absorbed, but a genuine drift is corrected by a seek. */
         lowLatencyMode: false,
         liveSyncDurationCount: 6,
-        liveMaxLatencyDurationCount: 20,
+        liveMaxLatencyDurationCount: 12,
 
-        /* Never speed up to chase the edge. Catching up spends exactly the
-           cushion this change exists to build, and on a tunnelled link the
-           player loses that race more often than it wins it. */
-        maxLiveSyncPlaybackRate: 1,
+        /* Catch up gently, and only gently. At 1.05 an extra ten seconds is
+           recovered over about three minutes, slowly enough that neither the
+           picture nor the audio pitch gives it away, and slowly enough that
+           it cannot eat the cushion the way a 1.3 rate once did. Setting this
+           to exactly 1 removes the mechanism altogether, which is what caused
+           the drift described above. */
+        maxLiveSyncPlaybackRate: 1.05,
         liveDurationInfinity: true,
 
         /* Buffer well ahead, without asking the WebView for a quota it will
