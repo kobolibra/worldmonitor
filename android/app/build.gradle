@@ -1,0 +1,37 @@
+plugins {
+	id 'com.android.application'
+}
+
+android {
+	namespace 'com.kobolibra.bbglive'
+	compileSdk 34
+
+	defaultConfig {
+		applicationId 'com.kobolibra.bbglive'
+		minSdk 24
+		targetSdk 34
+		versionCode 1
+		versionName '1.0'
+	}
+
+	buildTypes {
+		debug {
+			minifyEnabled false
+		}
+		release {
+			minifyEnabled false
+		}
+	}
+
+	compileOptions {
+		sourceCompatibility JavaVersion.VERSION_17
+		targetCompatibility JavaVersion.VERSION_17
+	}
+}
+
+// No dependencies on purpose. Everything this app needs - WebView, the
+// fullscreen callback, the Material theme - is in the platform itself.
+// A zero-dependency APK is a few hundred KB instead of several MB, and it
+// has no transitive supply chain to audit.
+dependencies {
+}

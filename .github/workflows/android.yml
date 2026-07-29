@@ -1,0 +1,76 @@
+name: Android APK
+
+# Deliberately narrow: this can only be woken by a push to the `android`
+# branch that touches the app itself, or by a manual dispatch. Edits to
+# gh-pages (the actual website) will never trigger a build.
+on:
+  push:
+    branches: [android]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install the build platform
+        run: sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Assemble
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Name the artifact something a human can recognise
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk bloomberg-live.apk
+          ls -lh bloomberg-live.apk
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bloomberg-live-apk
+          path: bloomberg-live.apk
+          if-no-files-found: error
+
+      - name: Publish a release so the phone can download it directly
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Bloomberg Live APK (build ${{ github.run_number }})
+          body: |
+            A WebView shell around https://kobolibra.github.io/worldmonitor/
+
+            Download `bloomberg-live.apk` below and open it on the device.
+            You will need to allow installation from unknown sources once.
+
+            The app loads the live page, so any later fix to the page reaches
+            this build automatically - no reinstall needed.
+          files: bloomberg-live.apk
+          draft: false
+          prerelease: false
