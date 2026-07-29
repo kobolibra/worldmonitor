@@ -69,6 +69,71 @@
 </script>
 <script async src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js" onload="__hlsOk()" onerror="__hlsFail()"></script>
 
+<!-- Connection warm up, running in parallel with the download above.
+     Nothing here plays anything, and nothing here is required.
+
+     Cold start used to be strictly serial: the first contact with the origin
+     could not begin until hls.js had finished arriving, because hls.js is the
+     thing that asks for the manifest. Over a long path that puts two full
+     handshakes in a queue for no reason.
+
+     Asking for the master playlist now does the lookup, the TLS handshake and
+     the manifest round trip while the library is still in flight. The variant
+     addresses it returns also name the host that will serve the video
+     segments, which is otherwise not known until the player has already
+     started, so that connection is opened early too.
+
+     Every step is wrapped. On any failure this does nothing at all and the
+     original path runs exactly as before. -->
+<script>
+(function(){
+  if(!window.fetch || !window.URL) return;
+
+  /* Mirrors SOURCES in the main script below. This copy is only a warm up
+     hint, so if the two ever drift the worst case is one idle connection. */
+  var BASE  = "https://www.bloomberg.com/media-manifest/streams/";
+  var FILES = {asia:"asia.m3u8", phoenix:"phoenix-us.m3u8", us:"us.m3u8", eu:"eu.m3u8", aus:"aus.m3u8"};
+
+  var id = "asia";
+  try{ id = localStorage.getItem("bbg.source") || "asia"; }catch(e){}
+  var url = BASE + (FILES[id] || FILES.asia);
+
+  function preconnect(origin){
+    try{
+      if(document.querySelector('link[rel="preconnect"][href="' + origin + '"]')) return;
+      var l = document.createElement("link");
+      l.rel = "preconnect";
+      l.href = origin;
+      l.crossOrigin = "";
+      document.head.appendChild(l);
+    }catch(e){}
+  }
+
+  try{
+    fetch(url, {mode:"cors", credentials:"omit"}).then(function(r){
+      return r && r.ok ? r.text() : "";
+    }).then(function(txt){
+      if(!txt) return;
+      /* Non comment lines in a master playlist are the variant addresses.
+         Two distinct origins is plenty; the rest will reuse them. */
+      var lines = txt.split("\n"), seen = {}, found = 0;
+      for(var i = 0; i < lines.length && found < 2; i++){
+        var s = lines[i].trim();
+        if(!s || s.charAt(0) === "#") continue;
+        try{
+          var o = new URL(s, url).origin;
+          if(o && o.indexOf("http") === 0 && !seen[o]){
+            seen[o] = 1;
+            found++;
+            preconnect(o);
+          }
+        }catch(e){}
+      }
+    })["catch"](function(){});
+  }catch(e){}
+})();
+</script>
+
 <style>
   :root{
     --bg:#06070a;
@@ -387,7 +452,9 @@
      ASIA leads the list because its origin is nearest, which is what actually
      determines whether the picture holds together. US ALT carries the full
      broadcast package but originates in US-East; that is a trade worth
-     offering and not worth making on someone's behalf. */
+     offering and not worth making on someone's behalf.
+
+     Kept in step with the warm up map in <head>. */
   var SOURCES = [
     {id:"asia",    name:"ASIA",   note:"亚洲 · 回源最近", url:"https://www.bloomberg.com/media-manifest/streams/asia.m3u8"},
     {id:"phoenix", name:"US ALT", note:"美东 · 带行情条", url:"https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8"},
