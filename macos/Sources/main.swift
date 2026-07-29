@@ -44,8 +44,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			cfg.preferences.setValue(true, forKey: "fullScreenEnabled")
 		}
 
+		// WebKit blocks the navigation on a Safe Browsing lookup before it will
+		// paint. The destination here is a static file in our own repository,
+		// so the check protects against nothing, while the lookup itself has to
+		// reach a service that is slow or unreachable on the networks this app
+		// runs on. Turning it off removes a round trip from every launch.
+		cfg.preferences.isFraudulentWebsiteWarningEnabled = false
+
 		// The default data store is persistent, which is what keeps the page's
-		// stored source, quality and volume across launches.
+		// stored source, quality and volume across launches - and what lets the
+		// second launch reuse the cached copy of hls.js instead of refetching it.
 		cfg.websiteDataStore = .default()
 
 		web = WKWebView(frame: .zero, configuration: cfg)
