@@ -1,0 +1,72 @@
+name: macOS app
+
+# Narrow on purpose, exactly like the Android workflow: only a push to the
+# apps branch that touches the macOS project, or a manual dispatch. Editing
+# the website on gh-pages can never trigger this.
+on:
+  push:
+    branches: [apps]
+    paths:
+      - 'macos/**'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-app
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Show the toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swiftc --version
+
+      - name: Build the app bundle
+        run: bash macos/build.sh
+
+      - name: Zip it
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "macos/build/Bloomberg Live.app" \
+            BloombergLive-macOS.zip
+          ls -lh BloombergLive-macOS.zip
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bloomberg-live-macos
+          path: BloombergLive-macOS.zip
+          if-no-files-found: error
+
+      - name: Publish a release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mac-${{ github.run_number }}
+          name: Bloomberg Live for macOS (build ${{ github.run_number }})
+          body: |
+            A native WKWebView window around https://kobolibra.github.io/worldmonitor/
+
+            Universal binary, so it runs on both Apple Silicon and Intel Macs.
+
+            Unzip and drag `Bloomberg Live.app` into Applications.
+
+            The build is ad hoc signed and not notarised, so the first launch
+            will be refused. Right click the app and choose Open, then confirm.
+            A plain double click will not offer that option. This is only
+            needed once.
+
+            The app loads the live page, so any later fix to the page reaches
+            this build automatically, with no reinstall.
+          files: BloombergLive-macOS.zip
+          draft: false
+          prerelease: false

@@ -1,11 +1,11 @@
 name: Android APK
 
-# Deliberately narrow: this can only be woken by a push to the `android`
+# Deliberately narrow: this can only be woken by a push to the `apps`
 # branch that touches the app itself, or by a manual dispatch. Edits to
 # gh-pages (the actual website) will never trigger a build.
 on:
   push:
-    branches: [android]
+    branches: [apps]
     paths:
       - 'android/**'
       - '.github/workflows/android.yml'
