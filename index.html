@@ -175,27 +175,28 @@
   .session.pre{color:var(--accent-2); background:rgba(255,106,0,.1); border-color:rgba(255,106,0,.26);}
   .session.off{color:var(--faint); background:rgba(255,255,255,.04); border-color:var(--line);}
 
-  /* ---------- Stage ---------- */
+  /* ---------- Stage ----------
+     The frame hugs the picture, rather than the picture sitting inside a frame.
+     A video is a replaced element with an intrinsic aspect, so max-width plus
+     max-height alone make it as large as it can be while staying in proportion,
+     exactly the way an image behaves. Whatever room is left over then belongs to
+     the page instead of to a black slab, which is why this holds at any window
+     shape and for any feed: a 16:10 laptop, a 4:3 tablet in landscape, a phone
+     upright, or a 16:9 television. */
   .stage{flex:1 1 auto; min-height:0; display:flex; padding:clamp(14px,2.2vw,26px) var(--pad-x) 0;}
   .screen{position:relative; flex:1 1 auto; min-height:0; min-width:0;
-    display:flex; align-items:center; justify-content:center;
-    border-radius:var(--radius); overflow:hidden; background:#000;
-    box-shadow:0 36px 96px rgba(0,0,0,.64), 0 0 0 1px rgba(255,255,255,.05);}
+    display:flex; align-items:center; justify-content:center; background:transparent;}
   .screen.mutedState{cursor:pointer;}
-  .screen::before{content:""; position:absolute; inset:0; z-index:4; pointer-events:none; border-radius:var(--radius);
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.08);}
-  .screen video{position:relative; z-index:1; width:100%; height:100%; object-fit:contain; background:#000;}
+  .screen video{display:block; width:auto; height:auto; max-width:100%; max-height:100%;
+    object-fit:contain; background:#000; border-radius:var(--radius);
+    box-shadow:0 36px 96px rgba(0,0,0,.64), 0 0 0 1px rgba(255,255,255,.06);}
 
   /* ---------- Cinema layout ----------
-     The black bars down both sides are the chrome, not the broadcast: once a
-     header and a rail have taken their share of the height, what remains is
-     wider than 16:9, and a 16:9 picture can only fill such a box by height.
-     Floating both bars over the picture makes the stage the whole viewport, so
-     a 16:9 feed on a 16:9 screen fills it edge to edge. The bars then fade
-     after a few idle seconds and return on any input. */
+     Floating both bars over the picture gives the stage the whole viewport, so
+     on a 16:9 screen a 16:9 feed reaches every edge. The bars then fade after a
+     few idle seconds and return on any input. */
   body.cinema .stage{padding:0;}
-  body.cinema .screen{border-radius:0; box-shadow:none;}
-  body.cinema .screen::before{display:none;}
+  body.cinema .screen video{border-radius:0; box-shadow:none;}
   body.cinema .bar,
   body.cinema .rail{
     position:fixed; left:0; right:0; z-index:30;
@@ -210,10 +211,17 @@
   body.cinema.idle .rail{opacity:0; transform:translateY(101%); pointer-events:none;}
   body.cinema.idle{cursor:none;}
 
-  /* ---------- Connection state ---------- */
+  /* ---------- Connection state ----------
+     Now that the area around the picture is the page rather than a black box,
+     this has to carry its own surface: it reads as a card while connecting, and
+     stays legible when it appears over moving video after an error. */
   .state{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:3;
     display:flex; flex-direction:column; align-items:center; gap:15px; text-align:center;
-    color:var(--muted); pointer-events:none; padding:0 24px;}
+    color:var(--muted); pointer-events:none;
+    padding:30px 36px; border-radius:var(--radius);
+    background:rgba(8,10,14,.62); border:1px solid var(--line);
+    backdrop-filter:blur(18px) saturate(150%); -webkit-backdrop-filter:blur(18px) saturate(150%);
+    box-shadow:0 20px 56px rgba(0,0,0,.45);}
   .state[hidden]{display:none;}
   .state.error{pointer-events:auto;}
   .spinner{width:28px; height:28px; border-radius:50%;
@@ -346,6 +354,7 @@
     .session{font-size:9px; padding:1px 5px;}
     .rail .m-hide{display:none;}
     .hint{bottom:46px;}
+    .state{padding:24px 26px;}
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation-duration:.001ms !important; animation-iteration-count:1 !important;
@@ -463,6 +472,6 @@
 
 <noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
 
-<script src="app.js?v=21" defer></script>
+<script src="app.js?v=22" defer></script>
 </body>
 </html>
