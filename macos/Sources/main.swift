@@ -9,7 +9,9 @@ let homeHost = "kobolibra.github.io"
 
 let backdrop = NSColor(srgbRed: 0x06 / 255.0, green: 0x07 / 255.0, blue: 0x0A / 255.0, alpha: 1)
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate,
+	WKScriptMessageHandler
+{
 
 	private var window: NSWindow!
 	private var web: WKWebView!
@@ -36,13 +38,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		cfg.mediaTypesRequiringUserActionForPlayback = []
 		cfg.allowsAirPlayForMediaPlayback = true
 
-		// Element fullscreen is off by default in WKWebView on macOS. Without
-		// it the page's fullscreen button silently does nothing.
+		// Element fullscreen is off by default in WKWebView on macOS. This is
+		// what the video's own control uses, so it stays enabled.
 		if #available(macOS 12.3, *) {
 			cfg.preferences.isElementFullscreenEnabled = true
 		} else {
 			cfg.preferences.setValue(true, forKey: "fullScreenEnabled")
 		}
+
+		// What a person means by fullscreen on a desktop is the window filling
+		// the display, and a web view cannot resize the window it lives in.
+		// Expanding an element inside the window is a different thing entirely:
+		// the bars vanish and the window stays exactly where it was, which is
+		// precisely the confusing half-result the page's own button produced.
+		// So the page asks the shell over this channel, and the shell does what
+		// the green button does.
+		cfg.userContentController.add(self, name: "bbgFullscreen")
 
 		// WebKit blocks the navigation on a Safe Browsing lookup before it will
 		// paint. The destination here is a static file in our own repository,
@@ -67,6 +78,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		}
 	}
 
+	// MARK: - Fullscreen
+
+	func userContentController(
+		_ controller: WKUserContentController, didReceive message: WKScriptMessage
+	) {
+		guard message.name == "bbgFullscreen" else { return }
+		window.toggleFullScreen(nil)
+	}
+
+	// The window can also be taken fullscreen by routes the page knows nothing
+	// about: the green button, the View menu, a trackpad gesture. Telling the
+	// page either way is what keeps the bars, the rail label and the window in
+	// agreement no matter which one was used.
+	@objc private func windowEnteredFullScreen() { tellPage(cinema: true) }
+	@objc private func windowLeftFullScreen() { tellPage(cinema: false) }
+
+	private func tellPage(cinema on: Bool) {
+		let js = "window.__bbgSetCinema && window.__bbgSetCinema(\(on ? "true" : "false"))"
+		web.evaluateJavaScript(js, completionHandler: nil)
+	}
+
 	// MARK: - Window
 
 	private func buildWindow() {
@@ -89,6 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		window.isMovableByWindowBackground = true
 		window.contentView = web
 		window.collectionBehavior.insert(.fullScreenPrimary)
+
+		let centre = NotificationCenter.default
+		centre.addObserver(
+			self, selector: #selector(windowEnteredFullScreen),
+			name: NSWindow.didEnterFullScreenNotification, object: window)
+		centre.addObserver(
+			self, selector: #selector(windowLeftFullScreen),
+			name: NSWindow.didExitFullScreenNotification, object: window)
 
 		// Restore the previous size and position if there is one, and only fall
 		// back to centring when there is not.
