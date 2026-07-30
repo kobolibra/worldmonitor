@@ -3,14 +3,20 @@ plugins {
 }
 
 // The signing material never lives in this file, and never in the repository.
-// CI decodes the keystore from a secret into a temporary path and passes it in
-// through the environment; a local build with none of these set simply produces
-// an unsigned release, which Gradle will still assemble.
-def keystorePath = System.getenv('BBG_KEYSTORE_FILE')
-def keystorePwd  = System.getenv('BBG_KEYSTORE_PASSWORD')
+// CI decodes the keystore from a base64 file into a temporary path and passes
+// it in through the environment; a local build with none of these set simply
+// produces an unsigned release, which Gradle will still assemble.
+def keystorePath  = System.getenv('BBG_KEYSTORE_FILE')
+def keystorePwd   = System.getenv('BBG_KEYSTORE_PASSWORD')
 def keystoreAlias = System.getenv('BBG_KEY_ALIAS')
-def keyPwd       = System.getenv('BBG_KEY_PASSWORD')
-def hasSigning   = keystorePath != null && !keystorePath.isEmpty() && file(keystorePath).exists()
+def keyPwd        = System.getenv('BBG_KEY_PASSWORD')
+def hasSigning    = keystorePath != null && !keystorePath.isEmpty() && file(keystorePath).exists()
+
+// Worked out here rather than inline. In Groovy, `versionCode (expr).toInteger()`
+// parses as a call to versionCode followed by a method on its return value,
+// which is null - so keep the arithmetic out of the assignment entirely.
+def buildNumber = Integer.parseInt(System.getenv('BBG_VERSION_CODE') ?: '1')
+def buildName   = System.getenv('BBG_VERSION_NAME') ?: '1.0'
 
 android {
 	namespace 'com.kobolibra.bbglive'
@@ -22,8 +28,8 @@ android {
 		targetSdk 34
 		// The build number, so every published APK installs over the previous
 		// one instead of being refused as a downgrade.
-		versionCode (System.getenv('BBG_VERSION_CODE') ?: '1').toInteger()
-		versionName System.getenv('BBG_VERSION_NAME') ?: '1.0'
+		versionCode buildNumber
+		versionName buildName
 	}
 
 	signingConfigs {
