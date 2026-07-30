@@ -119,8 +119,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		window.appearance = NSAppearance(named: .darkAqua)
 		window.minSize = NSSize(width: 640, height: 400)
 		window.isMovableByWindowBackground = true
-		window.contentView = web
 		window.collectionBehavior.insert(.fullScreenPrimary)
+
+		// The web view goes inside a plain container and is pinned to all four
+		// edges of it, rather than being handed to the window as its content view
+		// directly.
+		//
+		// Handing a WKWebView over as the content view looks like it should be
+		// enough, and in a plain resize it is. The fullscreen transition is not a
+		// plain resize: the window is swapped onto a new, larger surface, and a
+		// content view that carries neither an autoresizing mask nor any
+		// constraint has nothing telling it to grow with it. It keeps the old
+		// 1280x760 box. AppKit measures from the bottom left, so the old box stays
+		// welded to the bottom left corner and the new space above and to the
+		// right is left showing the window's own backdrop - the black band that
+		// appeared over and to the right of the page. Four constraints remove the
+		// ambiguity for every route into a resize: the green button, the View
+		// menu, a trackpad gesture, the page's own button, or dragging an edge.
+		let host = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 760))
+		host.autoresizesSubviews = true
+		host.wantsLayer = true
+		host.layer?.backgroundColor = backdrop.cgColor
+
+		web.translatesAutoresizingMaskIntoConstraints = false
+		host.addSubview(web)
+		NSLayoutConstraint.activate([
+			web.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+			web.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+			web.topAnchor.constraint(equalTo: host.topAnchor),
+			web.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+		])
+
+		window.contentView = host
 
 		let centre = NotificationCenter.default
 		centre.addObserver(
