@@ -42,14 +42,64 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Assemble
+      # The keystore is held as a base64 secret and only ever written to the
+      # runner's temporary directory, which is destroyed with the job. If the
+      # secret is absent the build still succeeds, as a debug APK, so a missing
+      # key is a warning rather than a broken pipeline.
+      - name: Restore the signing key
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.BBG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No signing key::BBG_KEYSTORE_BASE64 is not set, so this build falls back to a debug APK. Add the four BBG_* secrets to get a signed release."
+          else
+            mkdir -p "$RUNNER_TEMP/signing"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/signing/bbg.jks"
+            if [ ! -s "$RUNNER_TEMP/signing/bbg.jks" ]; then
+              echo "::error title=Signing key is unreadable::BBG_KEYSTORE_BASE64 did not decode into a keystore. Re-copy the base64 output of the .jks file."
+              exit 1
+            fi
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble the signed release
+        if: steps.signing.outputs.signed == 'true'
         working-directory: android
+        env:
+          BBG_KEYSTORE_FILE: ${{ runner.temp }}/signing/bbg.jks
+          BBG_KEYSTORE_PASSWORD: ${{ secrets.BBG_KEYSTORE_PASSWORD }}
+          BBG_KEY_ALIAS: ${{ secrets.BBG_KEY_ALIAS }}
+          BBG_KEY_PASSWORD: ${{ secrets.BBG_KEY_PASSWORD }}
+          BBG_VERSION_CODE: ${{ github.run_number }}
+          BBG_VERSION_NAME: 1.${{ github.run_number }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Assemble a debug build instead
+        if: steps.signing.outputs.signed != 'true'
+        working-directory: android
+        env:
+          BBG_VERSION_CODE: ${{ github.run_number }}
+          BBG_VERSION_NAME: 1.${{ github.run_number }}
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Name the artifact something a human can recognise
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk bloomberg-live.apk
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk bloomberg-live.apk
+          else
+            cp android/app/build/outputs/apk/debug/app-debug.apk bloomberg-live.apk
+          fi
           ls -lh bloomberg-live.apk
+
+      # Prints the certificate that will be pinned to this package for the rest
+      # of its life. Worth having in the log: if it ever changes, upgrades on
+      # the device will start failing and this is where the answer is.
+      - name: Show the certificate
+        if: steps.signing.outputs.signed == 'true'
+        run: |
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs --verbose bloomberg-live.apk
 
       - name: Upload as a workflow artifact
         uses: actions/upload-artifact@v4
@@ -66,8 +116,13 @@ jobs:
           body: |
             A WebView shell around https://kobolibra.github.io/worldmonitor/
 
+            Signed release build. The first time you install a signed build you
+            must uninstall any earlier copy first, because the old one carries a
+            different (debug) certificate and Android will not replace it. After
+            that, every later build installs straight over the top.
+
             Download `bloomberg-live.apk` below and open it on the device.
-            You will need to allow installation from unknown sources once.
+            Installation from unknown sources still has to be allowed once.
 
             The app loads the live page, so any later fix to the page reaches
             this build automatically - no reinstall needed.
