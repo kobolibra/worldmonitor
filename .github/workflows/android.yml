@@ -42,64 +42,69 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      # The keystore is held as a base64 secret and only ever written to the
-      # runner's temporary directory, which is destroyed with the job. If the
-      # secret is absent the build still succeeds, as a debug APK, so a missing
-      # key is a warning rather than a broken pipeline.
-      - name: Restore the signing key
-        id: signing
+      # An app's identity is its signing certificate, and that certificate has
+      # to stay the same for the lifetime of the package or upgrades stop
+      # installing. So the key is minted exactly once, on the first build that
+      # finds none, and committed back to this branch; every later build reuses
+      # it untouched.
+      #
+      # It is stored in the open, which is a deliberate trade. The alternative -
+      # a secret - would mean a human generating a keystore, base64ing it and
+      # pasting four values into repository settings, and would have to be
+      # repeated on every fork or restore. This app ships no credentials, talks
+      # to one public page, and is never listed in a store, so the only thing
+      # the key protects is the ability to publish an upgrade to a package that
+      # is only ever installed by hand. Convenience wins. If this app ever
+      # gains an account or goes to a store, move the keystore into
+      # BBG_KEYSTORE_BASE64 and delete the committed copy.
+      #
+      # A push made with GITHUB_TOKEN does not start another workflow run, so
+      # committing the key here cannot loop.
+      - name: Make sure a signing key exists
         env:
-          KEYSTORE_BASE64: ${{ secrets.BBG_KEYSTORE_BASE64 }}
+          KEY_B64: android/signing/bbg-release.jks.base64
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=No signing key::BBG_KEYSTORE_BASE64 is not set, so this build falls back to a debug APK. Add the four BBG_* secrets to get a signed release."
-          else
-            mkdir -p "$RUNNER_TEMP/signing"
-            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/signing/bbg.jks"
-            if [ ! -s "$RUNNER_TEMP/signing/bbg.jks" ]; then
-              echo "::error title=Signing key is unreadable::BBG_KEYSTORE_BASE64 did not decode into a keystore. Re-copy the base64 output of the .jks file."
-              exit 1
-            fi
-            echo "signed=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ ! -f "$KEY_B64" ]; then
+            echo "No signing key in the repository yet - creating one."
+            mkdir -p "$(dirname "$KEY_B64")"
+            keytool -genkeypair \
+              -keystore "$RUNNER_TEMP/bbg.jks" \
+              -alias bbglive \
+              -keyalg RSA -keysize 4096 -validity 10000 \
+              -storepass bbglive -keypass bbglive \
+              -dname "CN=Bloomberg Live, OU=Personal, O=kobolibra, C=CN"
+            base64 -w0 "$RUNNER_TEMP/bbg.jks" > "$KEY_B64"
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$KEY_B64"
+            git commit -m "ci: create the app signing key, once, so every build carries the same certificate"
+            git push origin HEAD:apps
           fi
+          base64 -d "$KEY_B64" > "$RUNNER_TEMP/bbg.jks"
+          test -s "$RUNNER_TEMP/bbg.jks"
 
       - name: Assemble the signed release
-        if: steps.signing.outputs.signed == 'true'
         working-directory: android
         env:
-          BBG_KEYSTORE_FILE: ${{ runner.temp }}/signing/bbg.jks
-          BBG_KEYSTORE_PASSWORD: ${{ secrets.BBG_KEYSTORE_PASSWORD }}
-          BBG_KEY_ALIAS: ${{ secrets.BBG_KEY_ALIAS }}
-          BBG_KEY_PASSWORD: ${{ secrets.BBG_KEY_PASSWORD }}
+          BBG_KEYSTORE_FILE: ${{ runner.temp }}/bbg.jks
+          BBG_KEYSTORE_PASSWORD: bbglive
+          BBG_KEY_ALIAS: bbglive
+          BBG_KEY_PASSWORD: bbglive
           BBG_VERSION_CODE: ${{ github.run_number }}
           BBG_VERSION_NAME: 1.${{ github.run_number }}
         run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Assemble a debug build instead
-        if: steps.signing.outputs.signed != 'true'
-        working-directory: android
-        env:
-          BBG_VERSION_CODE: ${{ github.run_number }}
-          BBG_VERSION_NAME: 1.${{ github.run_number }}
-        run: gradle assembleDebug --no-daemon --stacktrace
-
       - name: Name the artifact something a human can recognise
         run: |
-          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
-            cp android/app/build/outputs/apk/release/app-release.apk bloomberg-live.apk
-          else
-            cp android/app/build/outputs/apk/debug/app-debug.apk bloomberg-live.apk
-          fi
+          cp android/app/build/outputs/apk/release/app-release.apk bloomberg-live.apk
           ls -lh bloomberg-live.apk
 
-      # Prints the certificate that will be pinned to this package for the rest
-      # of its life. Worth having in the log: if it ever changes, upgrades on
-      # the device will start failing and this is where the answer is.
+      # Prints the certificate now pinned to this package for the rest of its
+      # life. Worth having in the log: if it ever changes, upgrades on the
+      # device will start failing and this is where the answer is.
       - name: Show the certificate
-        if: steps.signing.outputs.signed == 'true'
-        run: |
-          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs --verbose bloomberg-live.apk
+        run: "$ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs --verbose bloomberg-live.apk"
 
       - name: Upload as a workflow artifact
         uses: actions/upload-artifact@v4
@@ -116,10 +121,13 @@ jobs:
           body: |
             A WebView shell around https://kobolibra.github.io/worldmonitor/
 
-            Signed release build. The first time you install a signed build you
-            must uninstall any earlier copy first, because the old one carries a
-            different (debug) certificate and Android will not replace it. After
-            that, every later build installs straight over the top.
+            Properly signed release build, not a debug build, so Play Protect
+            has far less to complain about.
+
+            The first signed build has to be installed after uninstalling the
+            old debug copy - the certificates differ and Android will not
+            replace one with the other. Every build after that installs
+            straight over the top.
 
             Download `bloomberg-live.apk` below and open it on the device.
             Installation from unknown sources still has to be allowed once.
