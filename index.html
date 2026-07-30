@@ -254,9 +254,9 @@
   #statLat.catching{color:var(--accent-2);}
   #statBuf.thin{color:var(--accent-2);}
 
-  /* Two selectors and three plain buttons. A keyboard shortcut is not a
-     control: play, mute and fullscreen used to be reachable only by key, which
-     on a television means not reachable at all. */
+  /* Two selectors and one button. Fullscreen needs a button because a remote
+     has no F key; play, pause and mute already have dedicated keys on every
+     remote and keyboard, so a button for them would be pure clutter. */
   .qsel{position:relative; display:inline-flex;}
   .q-btn{display:inline-flex; align-items:center; gap:7px; padding:4px 9px; margin:-4px 0;
     border-radius:8px; border:1px solid transparent; background:transparent;
@@ -443,14 +443,6 @@
 
     <span class="sep-dot" aria-hidden="true"></span>
 
-    <button class="q-btn" id="playBtn" type="button" title="播放 / 暂停（空格）">
-      <svg class="ci" id="playIcon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h3.4v14H7zm6.6 0H17v14h-3.4z"/></svg>
-      <span class="q-mode" id="playTxt">暂停</span>
-    </button>
-    <button class="q-btn" id="muteBtn" type="button" title="静音 / 取消静音（M）">
-      <svg class="ci" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg>
-      <span class="q-mode" id="muteTxt">取消静音</span>
-    </button>
     <button class="q-btn" id="fsBtn" type="button" title="全屏（F）">
       <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M15 4h5v5"/><path d="M20 15v5h-5"/><path d="M9 20H4v-5"/></svg>
       <span class="q-mode" id="fsTxt">全屏</span>
@@ -471,6 +463,6 @@
 
 <noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
 
-<script src="app.js?v=20" defer></script>
+<script src="app.js?v=21" defer></script>
 </body>
 </html>
