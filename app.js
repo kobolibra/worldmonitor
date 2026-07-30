@@ -71,6 +71,10 @@
      keyboard, so putting them on the rail would only add clutter. */
   var fsBtn = $("fsBtn"), fsTxt = $("fsTxt");
 
+  /* The layer that holds the header, the picture and the rail. This is what
+     fullscreen expands. */
+  var appEl = document.querySelector(".app");
+
   var hls = null;
   var retryTimer = null, countdownTimer = null;
   var retryCount = 0, netRecovery = 0, mediaRecovery = 0;
@@ -167,31 +171,39 @@
   function closeQMenu(){ closeMenu(qBtn, qMenu); }
 
   /* ---------- Cinema mode, fullscreen, idle chrome, remote ----------
-     These are two different things and conflating them was the bug. Cinema mode
-     floats the header and the rail over the picture and then fades them, which
-     is what lets a 16:9 feed reach every edge of a 16:9 display. It does not
-     make the window itself fill the screen. Fullscreen does that, and it has to
-     be asked for separately.
+     These are two different things and conflating them was the original bug.
+     Cinema mode floats the header and the rail over the picture and then fades
+     them. Fullscreen makes the window itself fill the display. The button has
+     to do both, in that order.
 
-     Three faults were stacked here:
+     Faults found here, in the order they were introduced:
 
      1. The request expanded the picture element alone. The header and the rail
-        live outside it, so for the whole duration of fullscreen the source and
-        quality menus were not merely hidden but absent. The element to expand
-        is the document.
+        live outside it, so during fullscreen the source and quality menus were
+        not merely hidden but absent.
      2. The request was wrapped in a try block. requestFullscreen reports a
         refusal by rejecting its promise, which no try block can see, so a
-        refusal looked exactly like success: bars gone, window unchanged.
-     3. Inside a native shell the page is the wrong place to ask. The desktop
-        app owns an NSWindow and has its own fullscreen; the Android app is
-        already occupying the entire display. Asking the page there is either
-        the wrong lever or a no-op that can only misfire, so the shell is asked
-        instead, or nothing is.
+        refusal looked exactly like success.
+     3. Inside a native shell the page is the wrong place to ask. A WKWebView
+        cannot resize its own window, and the Android shell already occupies the
+        whole display.
+     4. The root element is not a valid thing to expand in practice. WebKit does
+        not stretch <html> to the fullscreen surface: it keeps the old box and
+        pins it to one corner, which is why the page ended up small in the lower
+        left with black above and to the right. An ordinary element is stretched
+        by the user agent, so the request now goes to the layer that holds the
+        header, the picture and the rail.
+     5. Hiding the chrome was blocked by focus. Clicking the button leaves it
+        focused, and the idle timer deliberately refuses to hide a focused
+        control, so on a desktop the two bars would never fade - the exact
+        complaint that fullscreen "only hides the bars" was in fact fullscreen
+        not hiding them at all. Entering now drops focus and fades at once.
 
      A remote is also not a keyboard: fullscreen used to exist only as an F key
      binding, which on a television means not at all. */
   var body = document.body;
   var IDLE_MS = 4200;
+  var ENTER_MS = 700;
   var idleTimer = null;
 
   /* The host app appends ?tv=1 when Android reports a television UI mode; the
@@ -239,7 +251,8 @@
     return document.fullscreenElement || document.webkitFullscreenElement || null;
   }
   function requestFs(){
-    var el = document.documentElement;
+    /* Never the root element: see fault 4 above. */
+    var el = appEl || document.body;
     var fn = el.requestFullscreen || el.webkitRequestFullscreen;
     if(!fn) return;
     try{
@@ -260,6 +273,17 @@
     body.classList.toggle("cinema", !!on);
     fsTxt.textContent = on ? "\u9000\u51fa\u5168\u5c4f" : "\u5168\u5c4f";
     wake();
+    /* Get out of the way immediately rather than after the usual idle delay,
+       and let go of the button that was just clicked so that hiding is not
+       refused. Any movement, tap or key brings both bars straight back. */
+    if(on){
+      if(!isTv){
+        var a = document.activeElement;
+        if(a && a !== body && a.blur){ try{ a.blur(); }catch(e){} }
+      }
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(sleep, ENTER_MS);
+    }
   }
   function toggleFullscreen(){
     var on = !inCinema();
@@ -282,6 +306,7 @@
      so the green button and the menu item agree with the rail button. */
   window.__bbgSetCinema = function(on){
     if(isTv) return;
+    if(!!on === inCinema()) return;
     setCinema(!!on);
   };
 
@@ -289,7 +314,6 @@
   fsBtn.addEventListener("click", function(e){
     e.stopPropagation();
     closeAllMenus();
-    wake();
     toggleFullscreen();
   });
 
