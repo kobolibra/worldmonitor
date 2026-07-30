@@ -132,6 +132,19 @@
     animation:appIn .34s cubic-bezier(.22,.61,.36,1) both;}
   @keyframes appIn{from{opacity:0; transform:translateY(6px);}to{opacity:1; transform:none;}}
 
+  /* ---------- Fullscreen surface ----------
+     Fullscreen expands this layer, never the root element. WebKit does not
+     stretch <html> onto the fullscreen surface: it keeps the previous box and
+     pins it to a corner, which is what left the page sitting small in the lower
+     left with black above and to the right. An ordinary element does get
+     stretched, and these rules state it outright rather than trusting each user
+     agent stylesheet. The backdrop has to be repeated here because the ambient
+     glow is a sibling of this layer and is therefore not painted inside it.
+     Written as separate rules on purpose: an engine that does not recognise the
+     prefixed pseudo-class would discard the entire selector list. */
+  .app:fullscreen{width:100%; height:100%; max-width:none; max-height:none; background:var(--bg);}
+  .app:-webkit-full-screen{width:100%; height:100%; max-width:none; max-height:none; background:var(--bg);}
+
   /* ---------- Header ---------- */
   .bar{
     position:relative; z-index:10; flex:none;
@@ -364,7 +377,7 @@
 </head>
 <body>
 <div class="ambient" id="ambient" aria-hidden="true"></div>
-<div class="app">
+<div class="app" id="app">
   <header class="bar">
     <div class="brand">
       <span class="mark" aria-hidden="true"></span>
@@ -372,7 +385,7 @@
       <span class="sep" aria-hidden="true"></span>
       <span class="sub">TELEVISION</span>
     </div>
-    <button class="live" id="liveBtn" type="button" title="回到直播边缘（L）">
+    <button class="live" id="liveBtn" type="button" title="\u56de\u5230\u76f4\u64ad\u8fb9\u7f18\uff08L\uff09">
       <span class="dot" aria-hidden="true"></span><span id="liveTxt">LIVE</span>
     </button>
     <!-- Ordered at runtime by real UTC offset; source order is not display order. -->
@@ -380,27 +393,27 @@
       <div class="clock" id="clockLondon">
         <span class="tz">LONDON</span>
         <time id="londonTime">--:--:--</time>
-        <span class="session off" id="londonSession">—</span>
+        <span class="session off" id="londonSession">\u2014</span>
       </div>
       <div class="clock" id="clockNy">
         <span class="tz">NEW YORK</span>
         <time id="nyTime">--:--:--</time>
-        <span class="session off" id="session">—</span>
+        <span class="session off" id="session">\u2014</span>
       </div>
       <div class="clock" id="clockHk">
         <span class="tz">HONG KONG</span>
         <time id="hkTime">--:--:--</time>
-        <span class="session off" id="hkSession">—</span>
+        <span class="session off" id="hkSession">\u2014</span>
       </div>
       <div class="clock" id="clockSeoul">
         <span class="tz">SEOUL</span>
         <time id="seoulTime">--:--:--</time>
-        <span class="session off" id="seoulSession">—</span>
+        <span class="session off" id="seoulSession">\u2014</span>
       </div>
       <div class="clock" id="clockLocal">
         <span class="tz" id="localTz">LOCAL</span>
         <time id="localTime">--:--:--</time>
-        <span class="session off" id="localSession">—</span>
+        <span class="session off" id="localSession">\u2014</span>
       </div>
     </div>
   </header>
@@ -412,39 +425,39 @@
         <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 1.8 20.6h20.4L12 3Z"/><path d="M12 10v4.3"/><path d="M12 17.7h.01"/></svg>
         <p class="stateText" id="stateText" aria-live="polite"></p>
         <p class="stateSub" id="stateSub"></p>
-        <button class="retryNow" id="retryNow" type="button">立即重试</button>
+        <button class="retryNow" id="retryNow" type="button">\u7acb\u5373\u91cd\u8bd5</button>
       </div>
-      <div class="hint" id="hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
+      <div class="hint" id="hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>\u70b9\u51fb\u753b\u9762\u53ef\u53d6\u6d88\u9759\u97f3</span></div>
       <video id="video" playsinline controls style="display:none"></video>
     </div>
   </main>
 
   <footer class="rail">
     <div class="qsel">
-      <button class="q-btn" id="sBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="sMenu" title="切换信号源（S）">
-        <span class="q-mode">信号源</span>
+      <button class="q-btn" id="sBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="sMenu" title="\u5207\u6362\u4fe1\u53f7\u6e90\uff08S\uff09">
+        <span class="q-mode">\u4fe1\u53f7\u6e90</span>
         <span class="q-thin" aria-hidden="true"></span>
         <span id="sName">ASIA</span>
         <svg class="q-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
       </button>
-      <div class="q-pop" id="sMenu" role="listbox" aria-label="信号源" hidden>
-        <div class="q-head"><b>信号源</b><span>BLOOMBERG</span></div>
+      <div class="q-pop" id="sMenu" role="listbox" aria-label="\u4fe1\u53f7\u6e90" hidden>
+        <div class="q-head"><b>\u4fe1\u53f7\u6e90</b><span>BLOOMBERG</span></div>
         <div class="q-list" id="sList"></div>
-        <div class="q-foot">回源机房越近越稳。US ALT 带有完整的行情和新闻条，但机房在美东，路上要多走很远。</div>
+        <div class="q-foot">\u56de\u6e90\u673a\u623f\u8d8a\u8fd1\u8d8a\u7a33\u3002US ALT \u5e26\u6709\u5b8c\u6574\u7684\u884c\u60c5\u548c\u65b0\u95fb\u6761\uff0c\u4f46\u673a\u623f\u5728\u7f8e\u4e1c\uff0c\u8def\u4e0a\u8981\u591a\u8d70\u5f88\u8fdc\u3002</div>
       </div>
     </div>
 
     <span class="sep-dot" aria-hidden="true"></span>
 
     <div class="qsel">
-      <button class="q-btn" id="qBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="qMenu" title="选择画质" disabled>
-        <span class="q-mode" id="qMode">自动</span>
+      <button class="q-btn" id="qBtn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="qMenu" title="\u9009\u62e9\u753b\u8d28" disabled>
+        <span class="q-mode" id="qMode">\u81ea\u52a8</span>
         <span class="q-thin" aria-hidden="true"></span>
-        <span id="qRes">—</span>
+        <span id="qRes">\u2014</span>
         <svg class="q-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
       </button>
-      <div class="q-pop" id="qMenu" role="listbox" aria-label="画质" hidden>
-        <div class="q-head"><b>画质</b><span id="qSrc">自适应</span></div>
+      <div class="q-pop" id="qMenu" role="listbox" aria-label="\u753b\u8d28" hidden>
+        <div class="q-head"><b>\u753b\u8d28</b><span id="qSrc">\u81ea\u9002\u5e94</span></div>
         <div class="q-list" id="qList"></div>
         <div class="q-foot" id="qFoot" hidden></div>
       </div>
@@ -452,26 +465,26 @@
 
     <span class="sep-dot" aria-hidden="true"></span>
 
-    <button class="q-btn" id="fsBtn" type="button" title="全屏（F）">
+    <button class="q-btn" id="fsBtn" type="button" title="\u5168\u5c4f\uff08F\uff09">
       <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M15 4h5v5"/><path d="M20 15v5h-5"/><path d="M9 20H4v-5"/></svg>
-      <span class="q-mode" id="fsTxt">全屏</span>
+      <span class="q-mode" id="fsTxt">\u5168\u5c4f</span>
     </button>
 
     <span class="sep-dot m-hide" aria-hidden="true"></span>
-    <span class="m-hide" id="statRate" title="根据最近几个已缓冲分片实测的平均编码码率">码率 —</span>
+    <span class="m-hide" id="statRate" title="\u6839\u636e\u6700\u8fd1\u51e0\u4e2a\u5df2\u7f13\u51b2\u5206\u7247\u5b9e\u6d4b\u7684\u5e73\u5747\u7f16\u7801\u7801\u7387">\u7801\u7387 \u2014</span>
     <span class="sep-dot m-hide" aria-hidden="true"></span>
-    <span class="m-hide" id="statBuf" title="当前已缓冲的可播放时长。这个数字接近 0 就会卡顿">缓冲 —</span>
+    <span class="m-hide" id="statBuf" title="\u5f53\u524d\u5df2\u7f13\u51b2\u7684\u53ef\u64ad\u653e\u65f6\u957f\u3002\u8fd9\u4e2a\u6570\u5b57\u63a5\u8fd1 0 \u5c31\u4f1a\u5361\u987f">\u7f13\u51b2 \u2014</span>
     <span class="sep-dot" aria-hidden="true"></span>
-    <span id="statLat" title="当前画面距离直播边缘的真实时间差">延迟 —</span>
+    <span id="statLat" title="\u5f53\u524d\u753b\u9762\u8ddd\u79bb\u76f4\u64ad\u8fb9\u7f18\u7684\u771f\u5b9e\u65f6\u95f4\u5dee">\u5ef6\u8fdf \u2014</span>
     <span class="spacer"></span>
     <span class="keys">
-      <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span><span><kbd>S</kbd>切换信号源</span>
+      <span><kbd>\u7a7a\u683c</kbd>\u64ad\u653e</span><span><kbd>M</kbd>\u9759\u97f3</span><span><kbd>F</kbd>\u5168\u5c4f</span><span><kbd>L</kbd>\u56de\u5230\u76f4\u64ad</span><span><kbd>S</kbd>\u5207\u6362\u4fe1\u53f7\u6e90</span>
     </span>
   </footer>
 </div>
 
-<noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
+<noscript><div class="noscript">\u8be5\u9875\u9762\u9700\u8981\u542f\u7528 JavaScript \u624d\u80fd\u64ad\u653e\u76f4\u64ad\u6d41\u3002</div></noscript>
 
-<script src="app.js?v=22" defer></script>
+<script src="app.js?v=23" defer></script>
 </body>
 </html>
