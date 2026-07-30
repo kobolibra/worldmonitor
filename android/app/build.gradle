@@ -2,6 +2,16 @@ plugins {
 	id 'com.android.application'
 }
 
+// The signing material never lives in this file, and never in the repository.
+// CI decodes the keystore from a secret into a temporary path and passes it in
+// through the environment; a local build with none of these set simply produces
+// an unsigned release, which Gradle will still assemble.
+def keystorePath = System.getenv('BBG_KEYSTORE_FILE')
+def keystorePwd  = System.getenv('BBG_KEYSTORE_PASSWORD')
+def keystoreAlias = System.getenv('BBG_KEY_ALIAS')
+def keyPwd       = System.getenv('BBG_KEY_PASSWORD')
+def hasSigning   = keystorePath != null && !keystorePath.isEmpty() && file(keystorePath).exists()
+
 android {
 	namespace 'com.kobolibra.bbglive'
 	compileSdk 34
@@ -10,8 +20,25 @@ android {
 		applicationId 'com.kobolibra.bbglive'
 		minSdk 24
 		targetSdk 34
-		versionCode 1
-		versionName '1.0'
+		// The build number, so every published APK installs over the previous
+		// one instead of being refused as a downgrade.
+		versionCode (System.getenv('BBG_VERSION_CODE') ?: '1').toInteger()
+		versionName System.getenv('BBG_VERSION_NAME') ?: '1.0'
+	}
+
+	signingConfigs {
+		release {
+			if (hasSigning) {
+				storeFile file(keystorePath)
+				storePassword keystorePwd
+				keyAlias keystoreAlias
+				keyPassword keyPwd
+				// v1 as well as v2/v3, so the package installs cleanly on the
+				// older API 24 devices this app still supports.
+				enableV1Signing true
+				enableV2Signing true
+			}
+		}
 	}
 
 	buildTypes {
@@ -19,7 +46,15 @@ android {
 			minifyEnabled false
 		}
 		release {
+			// Nothing to shrink: this module has no dependencies and one class.
+			// Leaving the optimiser off removes a whole category of release-only
+			// breakage for no measurable gain in an APK this size.
 			minifyEnabled false
+			shrinkResources false
+			debuggable false
+			if (hasSigning) {
+				signingConfig signingConfigs.release
+			}
 		}
 	}
 
