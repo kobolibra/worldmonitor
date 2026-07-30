@@ -186,26 +186,35 @@
   .session.off{color:var(--faint); background:rgba(255,255,255,.04); border-color:var(--line);}
 
   /* ---------- Stage ----------
-     The picture takes the whole stage and keeps its proportions inside that box.
-     Sizing it from its own intrinsic dimensions was wrong: a video is a replaced
-     element, so auto sizing stops at the encoded resolution and never scales up,
-     which left a 1280x720 feed sitting small in the middle of a large window.
-     Filling the stage and letting object-fit do the letterboxing scales both
-     ways. The element keeps no background of its own, so whatever room is left
-     over shows the page rather than a black slab. */
-  .stage{flex:1 1 auto; min-height:0; display:flex; padding:clamp(14px,2.2vw,26px) var(--pad-x) 0;}
+     The picture gets the entire middle of the window, with no padding of its
+     own. Padding around a video is not neutral decoration: it is subtracted
+     from the picture on both axes before the aspect fit even runs, so 33px of
+     margin either side plus 22px on top took a visible bite out of the image
+     and handed the space to nothing. The two bars already separate the picture
+     from the window edge.
+
+     What remains around the image after this is only the aspect difference
+     between the window and the feed: 16:9 inside a wider box has to leave room
+     somewhere. Filling that room instead would mean scaling up and cropping,
+     which on this channel would cut off the ticker and the news band. So the
+     leftover is deliberately the page's own backdrop, lit by the ambient glow
+     behind it, rather than a black slab.
+
+     object-fit does the fitting rather than intrinsic sizing, because a video
+     is a replaced element: auto sizing stops dead at the encoded resolution and
+     never scales up, which is what left a 1280x720 feed sitting small in the
+     middle of a large window. */
+  .stage{flex:1 1 auto; min-height:0; display:flex; padding:0;}
   .screen{position:relative; flex:1 1 auto; min-height:0; min-width:0;
     display:flex; align-items:center; justify-content:center; background:transparent;}
   .screen.mutedState{cursor:pointer;}
   .screen video{display:block; width:100%; height:100%;
-    object-fit:contain; background:transparent; border-radius:var(--radius);}
+    object-fit:contain; background:transparent;}
 
   /* ---------- Cinema layout ----------
      Floating both bars over the picture gives the stage the whole viewport, so
      on a 16:9 screen a 16:9 feed reaches every edge. The bars then fade after a
      few idle seconds and return on any input. */
-  body.cinema .stage{padding:0;}
-  body.cinema .screen video{border-radius:0;}
   body.cinema .bar,
   body.cinema .rail{
     position:fixed; left:0; right:0; z-index:30;
