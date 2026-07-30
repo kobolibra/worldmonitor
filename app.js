@@ -166,12 +166,27 @@
   document.addEventListener("click", closeAllMenus);
   function closeQMenu(){ closeMenu(qBtn, qMenu); }
 
-  /* ---------- Cinema mode, idle chrome, remote ----------
-     The black bars down both sides were the chrome, not the broadcast: once a
-     header and a rail have taken their share of the height, what remains is
-     wider than 16:9, and a 16:9 picture can only fill such a box by height.
-     Cinema mode floats both bars over the picture so the stage becomes the
-     whole viewport, then fades them after a few idle seconds.
+  /* ---------- Cinema mode, fullscreen, idle chrome, remote ----------
+     These are two different things and conflating them was the bug. Cinema mode
+     floats the header and the rail over the picture and then fades them, which
+     is what lets a 16:9 feed reach every edge of a 16:9 display. It does not
+     make the window itself fill the screen. Fullscreen does that, and it has to
+     be asked for separately.
+
+     Three faults were stacked here:
+
+     1. The request expanded the picture element alone. The header and the rail
+        live outside it, so for the whole duration of fullscreen the source and
+        quality menus were not merely hidden but absent. The element to expand
+        is the document.
+     2. The request was wrapped in a try block. requestFullscreen reports a
+        refusal by rejecting its promise, which no try block can see, so a
+        refusal looked exactly like success: bars gone, window unchanged.
+     3. Inside a native shell the page is the wrong place to ask. The desktop
+        app owns an NSWindow and has its own fullscreen; the Android app is
+        already occupying the entire display. Asking the page there is either
+        the wrong lever or a no-op that can only misfire, so the shell is asked
+        instead, or nothing is.
 
      A remote is also not a keyboard: fullscreen used to exist only as an F key
      binding, which on a television means not at all. */
@@ -183,6 +198,11 @@
      user agent test is only a fallback for a plain browser on a TV stick. */
   var isTv = /(^|[?&])tv=1(&|$)/.test(location.search) ||
     /Android TV|Google TV|GoogleTV|SMART-TV|SmartTV|BRAVIA|AFT[A-Z]|CrKey|Web0S|Tizen/i.test(navigator.userAgent || "");
+
+  /* Android WebView announces itself with a wv token; a browser on Android does
+     not carry it. Our Android shell is always immersive fullscreen already. */
+  var inWebViewShell = /;\s*wv[);]/.test(navigator.userAgent || "") ||
+    /\bwv\b/.test(navigator.userAgent || "");
 
   function inCinema(){ return body.classList.contains("cinema"); }
   function sleep(){
@@ -203,17 +223,37 @@
     clearTimeout(idleTimer);
     if(inCinema()) idleTimer = setTimeout(sleep, IDLE_MS);
   }
-  function requestFs(){
+
+  /* The desktop shell exposes a channel for this, because a WKWebView cannot
+     resize the window it lives in. Returning true means the shell has taken
+     the request and the page must not also ask the browser. */
+  function hostFs(){
     try{
-      if(screenEl.requestFullscreen) screenEl.requestFullscreen();
-      else if(screenEl.webkitRequestFullscreen) screenEl.webkitRequestFullscreen();
-      else if(video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      var h = window.webkit && window.webkit.messageHandlers &&
+        window.webkit.messageHandlers.bbgFullscreen;
+      if(h){ h.postMessage("toggle"); return true; }
+    }catch(e){}
+    return false;
+  }
+  function fsElement(){
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+  function requestFs(){
+    var el = document.documentElement;
+    var fn = el.requestFullscreen || el.webkitRequestFullscreen;
+    if(!fn) return;
+    try{
+      var p = fn.call(el);
+      /* A refusal arrives as a rejected promise, never as a throw. Cinema mode
+         stays on either way, so this only has to be swallowed deliberately
+         rather than reported. */
+      if(p && typeof p["catch"] === "function") p["catch"](noop);
     }catch(e){}
   }
   function exitFs(){
     try{
       var fn = document.exitFullscreen || document.webkitExitFullscreen;
-      if((document.fullscreenElement || document.webkitFullscreenElement) && fn) fn.call(document);
+      if(fsElement() && fn) fn.call(document);
     }catch(e){}
   }
   function setCinema(on){
@@ -221,20 +261,37 @@
     fsTxt.textContent = on ? "\u9000\u51fa\u5168\u5c4f" : "\u5168\u5c4f";
     wake();
   }
-  /* Cinema and real fullscreen are requested together but do not depend on one
-     another: an embedded WebView may refuse the fullscreen request, and when it
-     does the bars still have to disappear. */
   function toggleFullscreen(){
     var on = !inCinema();
     setCinema(on);
+    if(hostFs()) return;
+    if(inWebViewShell || isTv) return;
     if(on) requestFs(); else exitFs();
   }
-  document.addEventListener("fullscreenchange", function(){
-    if(isTv) return;
-    if(!(document.fullscreenElement || document.webkitFullscreenElement)) setCinema(false);
+
+  /* Leaving fullscreen by any route the page did not initiate - Escape, the
+     green button, the View menu - has to put the bars back. */
+  ["fullscreenchange", "webkitfullscreenchange"].forEach(function(evt){
+    document.addEventListener(evt, function(){
+      if(isTv) return;
+      if(!fsElement()) setCinema(false);
+    });
   });
+
+  /* Called by the desktop shell when its window enters or leaves fullscreen,
+     so the green button and the menu item agree with the rail button. */
+  window.__bbgSetCinema = function(on){
+    if(isTv) return;
+    setCinema(!!on);
+  };
+
   screenEl.addEventListener("dblclick", toggleFullscreen);
-  fsBtn.addEventListener("click", function(e){ e.stopPropagation(); wake(); toggleFullscreen(); });
+  fsBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    closeAllMenus();
+    wake();
+    toggleFullscreen();
+  });
 
   /* Left to right along the rail. A WebView will not reliably do spatial
      navigation by itself, so the walk is explicit. */
