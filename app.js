@@ -66,12 +66,10 @@
   var qBtn = $("qBtn"), qMode = $("qMode"), qRes = $("qRes");
   var qMenu = $("qMenu"), qList = $("qList"), qFoot = $("qFoot"), qSrc = $("qSrc");
 
-  var playBtn = $("playBtn"), playTxt = $("playTxt"), playIcon = $("playIcon");
-  var muteBtn = $("muteBtn"), muteTxt = $("muteTxt");
-  var fsBtn   = $("fsBtn"),   fsTxt   = $("fsTxt");
-
-  var ICON_PLAY  = "M8 5v14l11-7z";
-  var ICON_PAUSE = "M7 5h3.4v14H7zm6.6 0H17v14h-3.4z";
+  /* Fullscreen is the only playback control that needs a button of its own.
+     Play, pause and mute already exist as dedicated keys on every remote and
+     keyboard, so putting them on the rail would only add clutter. */
+  var fsBtn = $("fsBtn"), fsTxt = $("fsTxt");
 
   var hls = null;
   var retryTimer = null, countdownTimer = null;
@@ -175,8 +173,8 @@
      Cinema mode floats both bars over the picture so the stage becomes the
      whole viewport, then fades them after a few idle seconds.
 
-     A remote is also not a keyboard: play, mute and fullscreen used to exist
-     only as key bindings, which on a television means not at all. */
+     A remote is also not a keyboard: fullscreen used to exist only as an F key
+     binding, which on a television means not at all. */
   var body = document.body;
   var IDLE_MS = 4200;
   var idleTimer = null;
@@ -237,28 +235,10 @@
   });
   screenEl.addEventListener("dblclick", toggleFullscreen);
   fsBtn.addEventListener("click", function(e){ e.stopPropagation(); wake(); toggleFullscreen(); });
-  playBtn.addEventListener("click", function(e){
-    e.stopPropagation(); wake();
-    if(video.paused) video.play().catch(noop); else video.pause();
-  });
-  muteBtn.addEventListener("click", function(e){
-    e.stopPropagation(); wake();
-    if(video.muted) unmute(); else video.muted = true;
-  });
-
-  function syncControls(){
-    var paused = video.paused;
-    playTxt.textContent = paused ? "\u64ad\u653e" : "\u6682\u505c";
-    var p = playIcon.firstChild;
-    if(p && p.setAttribute) p.setAttribute("d", paused ? ICON_PLAY : ICON_PAUSE);
-    muteTxt.textContent = video.muted ? "\u53d6\u6d88\u9759\u97f3" : "\u9759\u97f3";
-  }
-  video.addEventListener("play", syncControls);
-  video.addEventListener("pause", syncControls);
 
   /* Left to right along the rail. A WebView will not reliably do spatial
      navigation by itself, so the walk is explicit. */
-  var CTRLS = [sBtn, qBtn, playBtn, muteBtn, fsBtn];
+  var CTRLS = [sBtn, qBtn, fsBtn];
   function liveCtrls(){
     return CTRLS.filter(function(b){ return b && !b.disabled && b.offsetParent !== null; });
   }
@@ -285,7 +265,6 @@
     try{ video.removeAttribute("controls"); video.tabIndex = -1; }catch(e){}
     setCinema(true);
   }
-  syncControls();
 
   /* ---------- Source selector ---------- */
   function buildSourceMenu(){
@@ -698,7 +677,6 @@
   }catch(e){}
   video.addEventListener("volumechange", function(){
     screenEl.classList.toggle("mutedState", video.muted);
-    syncControls();
     try{ if(!video.muted) localStorage.setItem("bbg.volume", String(video.volume)); }catch(e){}
   });
   function unmute(){
@@ -712,7 +690,8 @@
   /* ---------- Keyboard and remote ----------
      A remote arrives here as arrow keys plus Enter, so the arrows have to do
      something useful at the document level: wake the chrome, then walk the
-     rail. Enter activates a focused button by itself. */
+     rail. Enter activates a focused button by itself. Play, pause and mute stay
+     as keys only, including the dedicated media keys a remote sends. */
   document.addEventListener("keydown", function(e){
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
@@ -744,8 +723,9 @@
       if(inCinema() && !isTv){ setCinema(false); exitFs(); }
       return;
     }
-    if(k === " " || k === "spacebar" || k === "k" || k === "mediaplaypause"){
-      if(onButton && k !== "mediaplaypause") return;
+    if(k === " " || k === "spacebar" || k === "k" || k === "mediaplaypause" ||
+       k === "mediaplay" || k === "mediapause"){
+      if(onButton && k.indexOf("media") !== 0) return;
       e.preventDefault();
       if(video.paused) video.play().catch(noop); else video.pause();
       return;
