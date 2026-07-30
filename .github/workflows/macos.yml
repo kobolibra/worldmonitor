@@ -61,9 +61,13 @@ jobs:
             Unzip and drag `Bloomberg Live.app` into Applications.
 
             The build is ad hoc signed and not notarised, so the first launch
-            will be refused. Right click the app and choose Open, then confirm.
-            A plain double click will not offer that option. This is only
-            needed once.
+            is refused. On Sequoia the old right click and Open route no longer
+            offers a way through: open System Settings, Privacy and Security,
+            scroll to Security, and press Open Anyway next to the app, then
+            confirm once more. Only needed once.
+
+            The equivalent from a terminal, if you prefer it, is
+            `xattr -dr com.apple.quarantine "/Applications/Bloomberg Live.app"`.
 
             The app loads the live page, so any later fix to the page reaches
             this build automatically, with no reinstall.
