@@ -223,14 +223,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
 		let asset = AVURLAsset(url: u)
 		let playerItem = AVPlayerItem(asset: asset)
-		if #available(macOS 10.15, *) {
-			// Sit a fixed distance behind the live edge rather than letting the
-			// framework choose, so the figure in the rail means the same thing
-			// here as it does under hls.js.
-			playerItem.automaticallyPreservesTimeOffsetFromLive = true
-			playerItem.configuredTimeOffsetFromLive =
-				CMTime(seconds: targetOffset, preferredTimescale: 600)
-		}
+		// Sit a fixed distance behind the live edge rather than letting the
+		// framework choose, so the figure in the rail means the same thing here
+		// as it does under hls.js.
+		playerItem.automaticallyPreservesTimeOffsetFromLive = true
+		playerItem.configuredTimeOffsetFromLive =
+			CMTime(seconds: targetOffset, preferredTimescale: 600)
 
 		let p = AVPlayer(playerItem: playerItem)
 		p.isMuted = muted
@@ -257,7 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		send(["t": "loading", "msg": "\u{6b63}\u{5728}\u{8fde}\u{63a5} Bloomberg \u{76f4}\u{64ad}\u{2026}"])
 		p.play()
 		startStats()
-		loadVariants(asset)
+		fetchVariants(u)
 	}
 
 	private func releasePlayer() {
@@ -290,42 +288,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	private func applyLevel(_ h: Int) {
 		guard let it = item else { return }
 		if h > 0 {
-			if #available(macOS 11.0, *) {
-				it.preferredMaximumResolution = CGSize(width: 0, height: CGFloat(h))
-			}
+			it.preferredMaximumResolution = CGSize(width: 0, height: CGFloat(h))
 		} else {
-			if #available(macOS 11.0, *) {
-				it.preferredMaximumResolution = .zero
-			}
+			it.preferredMaximumResolution = .zero
 			it.preferredPeakBitRate = 0
 		}
 	}
 
-	/// The variant ladder, so the page can offer the feed's real rungs.
-	private func loadVariants(_ asset: AVURLAsset) {
-		guard #available(macOS 13.0, *) else { return }
-		Task { [weak self] in
-			guard let variants = try? await asset.load(.variants) else { return }
-			var seen = Set<Int>()
-			var list: [[String: Any]] = []
-			for v in variants {
-				guard let size = v.videoAttributes?.presentationSize else { continue }
-				let h = Int(size.height)
-				if h <= 0 || seen.contains(h) { continue }
-				seen.insert(h)
-				list.append([
-					"h": h,
-					"w": Int(size.width),
-					"bps": Int(v.peakBitRate ?? 0),
-				])
-			}
+	// MARK: - The variant ladder
+	//
+	// Read out of the master playlist directly, with URLSession and a few lines
+	// of parsing.
+	//
+	// AVFoundation does expose this as AVAsset.variants, but that property only
+	// exists on macOS 13 while this app deploys back to 11.0, and reaching it
+	// means an async property load - structured concurrency inside a plain
+	// two-target swiftc invocation with no Xcode project behind it. A master
+	// playlist is a text file with one line per rung. Parsing it needs no
+	// availability check, no concurrency, and gives the page exactly the same
+	// heights and bitrates.
+
+	private func fetchVariants(_ url: URL) {
+		var request = URLRequest(url: url)
+		request.timeoutInterval = 10
+		let task = URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+			guard let data = data,
+				let text = String(data: data, encoding: .utf8)
+			else { return }
+			let list = AppDelegate.parseMaster(text)
 			if list.isEmpty { return }
-			await MainActor.run { [weak self] in
+			DispatchQueue.main.async {
 				guard let self = self, self.player != nil, !self.sentTracks else { return }
 				self.sentTracks = true
 				self.send(["t": "tracks", "list": list])
 			}
 		}
+		task.resume()
+	}
+
+	/// Pull RESOLUTION and BANDWIDTH out of every EXT-X-STREAM-INF line.
+	///
+	/// A media playlist carries no such lines, in which case this returns nothing
+	/// and the page simply leaves the quality control on automatic.
+	private static func parseMaster(_ text: String) -> [[String: Any]] {
+		var seen = Set<Int>()
+		var list: [[String: Any]] = []
+
+		for rawLine in text.components(separatedBy: .newlines) {
+			let line = rawLine.trimmingCharacters(in: .whitespaces)
+			guard line.hasPrefix("#EXT-X-STREAM-INF:") else { continue }
+
+			let attrs = String(line.dropFirst("#EXT-X-STREAM-INF:".count))
+			var width = 0
+			var height = 0
+			var bps = 0
+
+			// Splitting on commas is wrong in general - CODECS="a,b" contains one -
+			// but every attribute this needs is unquoted, so a quoted-string flag
+			// is enough to keep the pieces aligned.
+			var pieces: [String] = []
+			var current = ""
+			var inQuotes = false
+			for ch in attrs {
+				if ch == "\"" {
+					inQuotes = !inQuotes
+					continue
+				}
+				if ch == ",", !inQuotes {
+					pieces.append(current)
+					current = ""
+					continue
+				}
+				current.append(ch)
+			}
+			pieces.append(current)
+
+			for piece in pieces {
+				guard let eq = piece.firstIndex(of: "=") else { continue }
+				let key = piece[piece.startIndex..<eq]
+					.trimmingCharacters(in: .whitespaces).uppercased()
+				let value = piece[piece.index(after: eq)...]
+					.trimmingCharacters(in: .whitespaces)
+
+				if key == "RESOLUTION" {
+					let parts = value.lowercased().components(separatedBy: "x")
+					if parts.count == 2 {
+						width = Int(parts[0]) ?? 0
+						height = Int(parts[1]) ?? 0
+					}
+				} else if key == "BANDWIDTH" || (key == "AVERAGE-BANDWIDTH" && bps == 0) {
+					bps = Int(value) ?? bps
+				}
+			}
+
+			if height <= 0 || seen.contains(height) { continue }
+			seen.insert(height)
+			list.append(["h": height, "w": width, "bps": bps])
+		}
+		return list
 	}
 
 	// MARK: - Telemetry
