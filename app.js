@@ -52,9 +52,9 @@
      The muted start was inherited from ordinary web practice, where autoplay
      with sound is refused until the page has seen a gesture, and the escape
      hatch was a click on the picture. On a television that escape hatch does
-     not exist: a remote sends arrow keys, the focus ring covers the rail only,
-     and the picture is not a focusable thing, so the one control that could
-     restore sound was the one control a remote can never reach.
+     not exist: a remote sends arrow keys, and until now the focus ring covered
+     the rail only, so the one control that could restore sound was the one
+     control a remote could never reach.
 
      It was also unnecessary in the two places it hurt most. The Android shell
      sets setMediaPlaybackRequiresUserGesture(false) and the macOS shell sets
@@ -232,6 +232,14 @@
         forever after. Nothing may depend on that guess: whatever the device,
         an idle period releases the focused control and hides the bars, and the
         focus is handed straight back when they return.
+     7. The picture was not in the focus ring at all. Everything a remote could
+        reach was a rail button or the LIVE badge, so the cursor could only ever
+        be inside the chrome, and pressing anything to look at the programme was
+        impossible: the viewer was permanently parked on the furniture. The
+        stage is now a focusable row of its own, between the LIVE badge above
+        and the rail below, so up and down walk badge - picture - rail. Landing
+        on the picture is also the honest way to dismiss the bars, because the
+        idle timer never had a reason to hold them open once focus is off them.
 
      A remote is also not a keyboard: fullscreen used to exist only as an F key
      binding, which on a television means not at all. */
@@ -329,10 +337,12 @@
     fsTxt.textContent = on ? "\u9000\u51fa\u5168\u5c4f" : "\u5168\u5c4f";
     wake();
     /* Get out of the way immediately rather than after the usual idle delay,
-       and let go of the button that was just clicked so that hiding is not
-       refused. Any movement, tap or key brings both bars straight back. */
+       and move the cursor off the button that was just pressed and onto the
+       programme, which is where a viewer entering fullscreen is looking. Any
+       movement, tap or key brings both bars straight back. */
     if(on){
       parkedFocus = null;
+      if(isCtrl(document.activeElement)) focusScreen();
       clearTimeout(idleTimer);
       idleTimer = setTimeout(sleep, ENTER_MS);
     }
@@ -369,8 +379,18 @@
     toggleFullscreen();
   });
 
-  /* Left to right along the rail. A WebView will not reliably do spatial
-     navigation by itself, so the walk is explicit. */
+  /* ---------- Spatial navigation ----------
+     Three rows, top to bottom: the LIVE badge, the picture, the rail. Up and
+     down move between rows, left and right walk the rail. A WebView will not
+     reliably do any of this by itself, so the walk is explicit.
+
+     The picture is a row because a viewer has to be able to point at the
+     programme. Without it the cursor is trapped in the chrome: there is nowhere
+     to go that is not a button, pressing OK always does something to the
+     furniture, and the bars can never be dismissed deliberately - only waited
+     out. The stage carries the focus rather than the <video> element, because a
+     focused video hands the arrow keys to the system control overlay, which a
+     remote cannot drive and which covers the picture while it is up. */
   var CTRLS = [sBtn, qBtn, fsBtn];
   function liveCtrls(){
     return CTRLS.filter(function(b){ return b && !b.disabled && b.offsetParent !== null; });
@@ -386,6 +406,36 @@
     var list = liveCtrls();
     if(list.length) list[0].focus();
   }
+  function focusScreen(){ try{ screenEl.focus(); }catch(e){} }
+  function onScreen(){ return document.activeElement === screenEl; }
+
+  /* 0 badge, 1 picture, 2 rail; -1 means the focus is somewhere we do not
+     manage, such as an open menu or nothing at all. */
+  function rowOf(el){
+    if(el === screenEl) return 1;
+    if(el === liveBtn) return 0;
+    if(CTRLS.indexOf(el) >= 0) return 2;
+    return -1;
+  }
+  function goRow(n){
+    if(n <= 0){ try{ liveBtn.focus(); }catch(e){} return; }
+    if(n === 1){ focusScreen(); return; }
+    focusRail();
+  }
+  /* The ends of the column are real ends: wrapping from the rail back up to the
+     badge would make a single press jump the whole screen. */
+  function moveRow(step){
+    var r = rowOf(document.activeElement);
+    if(r < 0){ focusScreen(); return; }
+    var n = r + step;
+    if(n < 0 || n > 2) return;
+    goRow(n);
+  }
+
+  /* A div is not focusable until told otherwise. This is what puts the picture
+     in the ring, on every device - a mouse and Tab reach it the same way. */
+  screenEl.tabIndex = 0;
+  screenEl.setAttribute("aria-label", "\u76f4\u64ad\u753b\u9762");
 
   ["mousemove", "mousedown", "touchstart", "wheel"].forEach(function(evt){
     document.addEventListener(evt, wake, {passive:true});
@@ -394,9 +444,12 @@
   if(isTv){
     body.classList.add("tv");
     /* System video controls cannot be driven by a remote and swallow the D-pad
-       while on screen. The rail replaces them. */
+       while on screen. The rail replaces them, and the stage takes the focus
+       instead of the video. */
     try{ video.removeAttribute("controls"); video.tabIndex = -1; }catch(e){}
     setCinema(true);
+    /* Start on the programme, not on a button, so the bars can fade at once. */
+    focusScreen();
   }
 
   /* ---------- Source selector ---------- */
@@ -666,8 +719,7 @@
      than pre-emptively surrendering to a policy that does not apply here.
      A blocked autoplay is reported by rejecting the promise play() returns; it
      is never thrown, so a try block around it sees nothing. Only in that
-     rejection do we mute, and only then is the tap-to-unmute hint shown - on a
-     television it would be advice that cannot be followed. */
+     rejection do we mute, and only then is the tap-to-unmute hint shown. */
   function attemptPlay(){
     video.muted = !wantSound;
     screenEl.classList.toggle("mutedState", video.muted);
@@ -852,13 +904,17 @@
     video.play().catch(noop);
     hintEl.classList.remove("show");
   }
-  screenEl.addEventListener("click", unmute);
+  screenEl.addEventListener("click", function(){
+    /* A click on the picture is also a request to point at it. */
+    focusScreen();
+    unmute();
+  });
 
   /* ---------- Keyboard and remote ----------
      A remote arrives here as arrow keys plus Enter, so the arrows have to do
      something useful at the document level: wake the chrome, then walk the
-     rail. Enter activates a focused button by itself. Play, pause and mute stay
-     as keys only, including the dedicated media keys a remote sends. */
+     three rows. Enter activates a focused button by itself; on the picture it
+     is play and pause. */
   document.addEventListener("keydown", function(e){
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
@@ -866,9 +922,8 @@
     wake();
 
     /* If the browser imposed silence, any key is the gesture that lifts it -
-       including on a remote, where the picture cannot be reached at all. A
-       deliberate mute is left alone: forcedMute is only ever set by a refused
-       play, never by the viewer pressing M. */
+       including on a remote. A deliberate mute is left alone: forcedMute is
+       only ever set by a refused play, never by the viewer pressing M. */
     if(forcedMute && video.muted && k !== "m") unmute();
 
     /* An open menu owns the keyboard; it has its own handler. */
@@ -879,10 +934,10 @@
 
     /* The press that brings the chrome back does nothing else. Otherwise the
        same press would also walk the focus, which on a remote means the bars
-       reappear already one button further along than the viewer left them. */
+       reappear already one row along from where the viewer left them. */
     if(wasHidden && (k === "arrowleft" || k === "arrowright" || k === "arrowup" || k === "arrowdown")){
       e.preventDefault();
-      if(!isCtrl(document.activeElement)) focusRail();
+      if(rowOf(document.activeElement) < 0) focusScreen();
       return;
     }
 
@@ -890,17 +945,25 @@
     var onButton = (tag === "BUTTON" || tag === "A" || tag === "INPUT");
 
     if(k === "arrowleft" || k === "arrowright"){
-      e.preventDefault(); moveFocus(k === "arrowright" ? 1 : -1); return;
-    }
-    if(k === "arrowdown"){ e.preventDefault(); focusRail(); return; }
-    if(k === "arrowup"){
       e.preventDefault();
-      if(document.activeElement === liveBtn) focusRail(); else liveBtn.focus();
+      /* Sideways is only meaningful along the rail. From the picture or the
+         badge it means: go to the row that has something to walk. */
+      if(rowOf(document.activeElement) === 2) moveFocus(k === "arrowright" ? 1 : -1);
+      else focusRail();
       return;
     }
+    if(k === "arrowdown"){ e.preventDefault(); moveRow(1);  return; }
+    if(k === "arrowup"){   e.preventDefault(); moveRow(-1); return; }
     if(k === "enter"){
+      if(onScreen()){
+        e.preventDefault();
+        if(video.muted) unmute();
+        else if(video.paused) video.play().catch(noop);
+        else video.pause();
+        return;
+      }
       if(onButton) return;
-      e.preventDefault(); focusRail(); return;
+      e.preventDefault(); focusScreen(); return;
     }
     if(k === "escape"){
       if(inCinema() && !isTv){ setCinema(false); exitFs(); }
