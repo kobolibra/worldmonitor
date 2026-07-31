@@ -154,6 +154,9 @@
      the whole selector list. */
   .app:fullscreen{width:100%; height:100%; max-width:none; max-height:none; background:var(--bg);}
   .app:-webkit-full-screen{width:100%; height:100%; max-width:none; max-height:none; background:var(--bg);}
+  /* While a native player owns the picture the page must not paint over it. */
+  html.native .app:fullscreen,
+  html.native .app:-webkit-full-screen{background:transparent;}
 
   /* ---------- Header ---------- */
   .bar{
@@ -216,7 +219,10 @@
      object-fit does the fitting rather than intrinsic sizing, because a video
      is a replaced element: auto sizing stops dead at the encoded resolution and
      never scales up, which is what left a 1280x720 feed sitting small in the
-     middle of a large window. */
+     middle of a large window.
+
+     Inside a shell this element becomes an empty frame: it is measured and its
+     rectangle is sent to the native player, which draws underneath the page. */
   .stage{flex:1 1 auto; min-height:0; display:flex; padding:0;}
   .screen{position:relative; flex:1 1 auto; min-height:0; min-width:0;
     display:flex; align-items:center; justify-content:center; background:transparent;}
@@ -476,7 +482,7 @@
       <div class="q-pop" id="sMenu" role="listbox" aria-label="信号源" hidden>
         <div class="q-head"><b>信号源</b><span>BLOOMBERG</span></div>
         <div class="q-list" id="sList"></div>
-        <div class="q-foot">回源机房越近越稳。US ALT 带有完整的行情和新闻条，但机房在美东，路上要多走很远。</div>
+        <div class="q-foot">回源机房越近越稳。US ALT 带有完整的行情和新闻条，但机房在美东。TV+ 是电视平台那一路，档位最高，只在 Mac 和安卓 app 里出现——它是 HEVC 编码，浏览器解不了。</div>
       </div>
     </div>
 
@@ -518,6 +524,9 @@
 
 <noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
 
-<script src="app.js?v=29" defer></script>
+<!-- Order matters: the bridge has to exist before app.js decides who owns the
+     picture. Both are deferred, and deferred scripts run in document order. -->
+<script src="native.js?v=1" defer></script>
+<script src="app.js?v=30" defer></script>
 </body>
 </html>
