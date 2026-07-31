@@ -64,12 +64,11 @@
      in flight, and the variant addresses name the segment host so that
      connection can be opened early too. Optional; wrapped throughout.
 
-     Full addresses rather than a filename appended to one base, because the
-     television distribution of the channel does not live on bloomberg.com at
-     all. Building the address from a shared prefix silently warmed up the wrong
-     origin for those, which is worse than not warming up at all: it opens a
-     connection that will never be used and delays the one that will. Any id not
-     listed here simply gets no warm up. -->
+     Full addresses rather than a filename appended to one base, so that a feed
+     which does not live on bloomberg.com can never be warmed up against the
+     wrong origin. Warming up the wrong origin is worse than none at all: it
+     opens a connection that will never be used and delays the one that will.
+     Any id not listed here simply gets no warm up. -->
 <script>
 (function(){
   if(!window.fetch || !window.URL) return;
@@ -79,9 +78,7 @@
     phoenix: BASE + "phoenix-us.m3u8",
     us:      BASE + "us.m3u8",
     eu:      BASE + "eu.m3u8",
-    aus:     BASE + "aus.m3u8",
-    fastgb:  "https://bloomberg-bloombergtv-1-gb.samsung.wurl.com/manifest/playlist.m3u8",
-    fastit:  "https://bloomberg-bloombergtv-1-it.samsung.wurl.com/manifest/playlist.m3u8"
+    aus:     BASE + "aus.m3u8"
   };
   var id = "asia";
   try{ id = localStorage.getItem("bbg.source") || "asia"; }catch(e){}
@@ -479,7 +476,7 @@
       <div class="q-pop" id="sMenu" role="listbox" aria-label="信号源" hidden>
         <div class="q-head"><b>信号源</b><span>BLOOMBERG</span></div>
         <div class="q-list" id="sList"></div>
-        <div class="q-foot">TV+ 是发给电视平台的那一路，转码一次后走通用 CDN，档位更高也更稳，和彭博官网不是同一条线。其余几条来自官网，回源机房越近越稳；US ALT 带完整行情和新闻条，但机房在美东。</div>
+        <div class="q-foot">回源机房越近越稳。US ALT 带有完整的行情和新闻条，但机房在美东，路上要多走很远。</div>
       </div>
     </div>
 
@@ -521,6 +518,6 @@
 
 <noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
 
-<script src="app.js?v=28" defer></script>
+<script src="app.js?v=29" defer></script>
 </body>
 </html>
