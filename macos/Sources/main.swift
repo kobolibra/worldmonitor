@@ -1,3 +1,4 @@
+import AVFoundation
 import Cocoa
 import WebKit
 
@@ -9,6 +10,24 @@ let homeHost = "kobolibra.github.io"
 
 let backdrop = NSColor(srgbRed: 0x06 / 255.0, green: 0x07 / 255.0, blue: 0x0A / 255.0, alpha: 1)
 
+/// Escape a string for embedding inside a JavaScript double-quoted literal.
+private func jsQuote(_ s: String) -> String {
+	var out = ""
+	out.reserveCapacity(s.count + 16)
+	for ch in s.unicodeScalars {
+		switch ch {
+		case "\\": out += "\\\\"
+		case "\"": out += "\\\""
+		case "\n": out += "\\n"
+		case "\r": out += "\\r"
+		case "\u{2028}": out += "\\u2028"
+		case "\u{2029}": out += "\\u2029"
+		default: out.unicodeScalars.append(ch)
+		}
+	}
+	return "\"" + out + "\""
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate,
 	WKScriptMessageHandler
 {
@@ -19,6 +38,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	// Held for the lifetime of the app. Releasing this token re-enables idle
 	// display sleep, so it must not be a local.
 	private var awakeToken: NSObjectProtocol?
+
+	// MARK: Native playback state
+	//
+	// WKWebView is WebKit, so hls.js works here - but it works the hard way.
+	// Every segment is fetched in JavaScript, remuxed to fragmented MP4 in
+	// JavaScript, and pushed through Media Source Extensions, which also means a
+	// CORS check on the manifest and no HEVC at all. AVPlayer does none of that:
+	// it hands the bytes straight to the hardware decoder, performs no CORS
+	// check, and speaks HLS natively. It is the same pipeline QuickTime and
+	// Safari's own video element use.
+	//
+	// So the picture is drawn by an AVPlayerLayer in a view underneath the web
+	// view, and the web view is made transparent so the page's header, clocks,
+	// menus and rail float over it. The page measures its own stage and sends
+	// the rectangle across, because it is the only side that knows where the
+	// picture belongs between the two bars.
+	private var videoView: NSView!
+	private var playerLayer: AVPlayerLayer?
+	private var player: AVPlayer?
+	private var item: AVPlayerItem?
+	private var statsTimer: Timer?
+	private var stageRect: CGRect = .zero
+	private var muted = false
+	private var everPlayed = false
+	private var startedAt = Date()
+	private var failures = 0
+	private var sentTracks = false
+
+	/// Mirrors the hls.js settings in app.js, so both paths behave alike.
+	private let targetOffset = 18.0
+	/// A feed that has produced nothing at all by now is not going to.
+	private let startupDeadline = 20.0
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		buildMenuBar()
@@ -54,6 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		// So the page asks the shell over this channel, and the shell does what
 		// the green button does.
 		cfg.userContentController.add(self, name: "bbgFullscreen")
+		// The second channel: everything to do with playback.
+		cfg.userContentController.add(self, name: "bbgPlayer")
 
 		// WebKit blocks the navigation on a Safe Browsing lookup before it will
 		// paint. The destination here is a static file in our own repository,
@@ -73,18 +126,298 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		web.allowsBackForwardNavigationGestures = false
 		web.allowsMagnification = false
 
+		// The web view has to be see-through, or it would paint over the picture
+		// underneath it. The backdrop moves to the container view instead.
+		//
+		// The page itself is only transparent while a native player owns the
+		// picture: without one it paints its own opaque background, so this is
+		// safe either way.
 		if #available(macOS 12.0, *) {
-			web.underPageBackgroundColor = backdrop
+			web.underPageBackgroundColor = .clear
 		}
+		// The public property above sets the colour behind the page, but the view
+		// still fills its own bounds opaquely first. This key is the long-standing
+		// way to stop that, and there is no public equivalent.
+		web.setValue(false, forKey: "drawsBackground")
 	}
 
-	// MARK: - Fullscreen
+	// MARK: - Messages from the page
 
 	func userContentController(
 		_ controller: WKUserContentController, didReceive message: WKScriptMessage
 	) {
-		guard message.name == "bbgFullscreen" else { return }
-		window.toggleFullScreen(nil)
+		if message.name == "bbgFullscreen" {
+			window.toggleFullScreen(nil)
+			return
+		}
+		guard message.name == "bbgPlayer",
+			let text = message.body as? String,
+			let data = text.data(using: .utf8),
+			let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+		else { return }
+		handle(o)
+	}
+
+	private func handle(_ o: [String: Any]) {
+		let a = (o["a"] as? String) ?? ""
+		switch a {
+		case "play":
+			startNative(
+				url: (o["url"] as? String) ?? "",
+				startMuted: (o["muted"] as? Bool) ?? false)
+		case "stop":
+			releasePlayer()
+		case "rect":
+			let x = (o["x"] as? Double) ?? 0
+			let y = (o["y"] as? Double) ?? 0
+			let w = (o["w"] as? Double) ?? 0
+			let h = (o["h"] as? Double) ?? 0
+			// A web view measures from the top left and AppKit from the bottom
+			// left. Getting this wrong does not look wrong - it looks like the
+			// picture is merely in the wrong place - so it is done in one line,
+			// here, and nowhere else. Points, not pixels: a WKWebView's CSS pixel
+			// is one point, and AppKit handles the backing scale itself.
+			let host = window?.contentView?.bounds.height ?? 0
+			stageRect = CGRect(x: x, y: host - (y + h), width: w, height: h)
+			applyRect()
+		case "mute":
+			setMuted((o["on"] as? Bool) ?? false)
+		case "toggle":
+			guard let p = player else { return }
+			if p.rate == 0 { p.play() } else { p.pause() }
+		case "live":
+			jumpToLive()
+		case "level":
+			applyLevel((o["h"] as? Int) ?? Int((o["h"] as? Double) ?? -1))
+		case "volume":
+			if let v = o["v"] as? Double { player?.volume = Float(max(0, min(1, v))) }
+		default:
+			break
+		}
+	}
+
+	// MARK: - Messages to the page
+
+	private func send(_ payload: [String: Any]) {
+		guard let web = web,
+			let data = try? JSONSerialization.data(withJSONObject: payload),
+			let text = String(data: data, encoding: .utf8)
+		else { return }
+		let js = "if(window.__bbgNativeEvent)window.__bbgNativeEvent(\(jsQuote(text)));"
+		web.evaluateJavaScript(js, completionHandler: nil)
+	}
+
+	// MARK: - Native playback
+
+	private func startNative(url: String, startMuted: Bool) {
+		guard let u = URL(string: url) else {
+			send(["t": "fallback"])
+			return
+		}
+		releasePlayer()
+
+		muted = startMuted
+		everPlayed = false
+		sentTracks = false
+		startedAt = Date()
+
+		let asset = AVURLAsset(url: u)
+		let playerItem = AVPlayerItem(asset: asset)
+		if #available(macOS 10.15, *) {
+			// Sit a fixed distance behind the live edge rather than letting the
+			// framework choose, so the figure in the rail means the same thing
+			// here as it does under hls.js.
+			playerItem.automaticallyPreservesTimeOffsetFromLive = true
+			playerItem.configuredTimeOffsetFromLive =
+				CMTime(seconds: targetOffset, preferredTimescale: 600)
+		}
+
+		let p = AVPlayer(playerItem: playerItem)
+		p.isMuted = muted
+		p.volume = 1
+		// Start as soon as there is something to show. The retry ladder in the
+		// page already handles a feed that genuinely will not open, and waiting
+		// longer only makes the first frame later.
+		p.automaticallyWaitsToMinimizeStalling = false
+
+		let layer = AVPlayerLayer(player: p)
+		// Never crop. The graphics package on this channel lives at the edges of
+		// the frame: filling the box would cut off the ticker and the news band.
+		layer.videoGravity = .resizeAspect
+		layer.backgroundColor = NSColor.clear.cgColor
+		videoView.layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
+		videoView.layer?.addSublayer(layer)
+
+		player = p
+		item = playerItem
+		playerLayer = layer
+		videoView.isHidden = false
+		applyRect()
+
+		send(["t": "loading", "msg": "\u{6b63}\u{5728}\u{8fde}\u{63a5} Bloomberg \u{76f4}\u{64ad}\u{2026}"])
+		p.play()
+		startStats()
+		loadVariants(asset)
+	}
+
+	private func releasePlayer() {
+		stopStats()
+		player?.pause()
+		playerLayer?.removeFromSuperlayer()
+		playerLayer = nil
+		player = nil
+		item = nil
+		videoView?.isHidden = true
+	}
+
+	private func setMuted(_ on: Bool) {
+		muted = on
+		player?.isMuted = on
+	}
+
+	private func jumpToLive() {
+		guard let it = item, let end = it.seekableTimeRanges.last?.timeRangeValue.end else { return }
+		player?.seek(to: end, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
+		player?.play()
+	}
+
+	/// A picked height, or -1 for auto.
+	///
+	/// AVFoundation offers a ceiling and no floor: there is no public way to pin
+	/// the ladder to exactly one rung. A ceiling is still the important half -
+	/// it is what stops a 1080p pick quietly becoming 1080p-or-anything - and
+	/// under a ceiling the framework will not climb above what was asked for.
+	private func applyLevel(_ h: Int) {
+		guard let it = item else { return }
+		if h > 0 {
+			if #available(macOS 11.0, *) {
+				it.preferredMaximumResolution = CGSize(width: 0, height: CGFloat(h))
+			}
+		} else {
+			if #available(macOS 11.0, *) {
+				it.preferredMaximumResolution = .zero
+			}
+			it.preferredPeakBitRate = 0
+		}
+	}
+
+	/// The variant ladder, so the page can offer the feed's real rungs.
+	private func loadVariants(_ asset: AVURLAsset) {
+		guard #available(macOS 13.0, *) else { return }
+		Task { [weak self] in
+			guard let variants = try? await asset.load(.variants) else { return }
+			var seen = Set<Int>()
+			var list: [[String: Any]] = []
+			for v in variants {
+				guard let size = v.videoAttributes?.presentationSize else { continue }
+				let h = Int(size.height)
+				if h <= 0 || seen.contains(h) { continue }
+				seen.insert(h)
+				list.append([
+					"h": h,
+					"w": Int(size.width),
+					"bps": Int(v.peakBitRate ?? 0),
+				])
+			}
+			if list.isEmpty { return }
+			await MainActor.run { [weak self] in
+				guard let self = self, self.player != nil, !self.sentTracks else { return }
+				self.sentTracks = true
+				self.send(["t": "tracks", "list": list])
+			}
+		}
+	}
+
+	// MARK: - Telemetry
+	//
+	// Polled rather than observed. Every figure the rail shows has to be read on
+	// a timer anyway, and the same tick is the cheapest place to notice that the
+	// item has failed or that nothing ever started - two conditions that would
+	// otherwise need their own observers to reach the same conclusion one second
+	// later.
+
+	private func startStats() {
+		stopStats()
+		let t = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+			self?.tick()
+		}
+		RunLoop.main.add(t, forMode: .common)
+		statsTimer = t
+	}
+
+	private func stopStats() {
+		statsTimer?.invalidate()
+		statsTimer = nil
+	}
+
+	private func tick() {
+		guard let p = player, let it = item else { return }
+
+		if it.status == .failed {
+			reportError(it.error?.localizedDescription ?? "")
+			return
+		}
+		if !everPlayed, Date().timeIntervalSince(startedAt) > startupDeadline {
+			reportError("\u{8d85}\u{65f6}")
+			return
+		}
+
+		let size = it.presentationSize
+		if !everPlayed, size.width > 0, it.status == .readyToPlay {
+			everPlayed = true
+			failures = 0
+			send(["t": "playing"])
+		}
+
+		var payload: [String: Any] = ["t": "stats"]
+
+		let now = it.currentTime()
+		if let loaded = it.loadedTimeRanges.last?.timeRangeValue {
+			let ahead = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(loaded), now))
+			if ahead.isFinite { payload["buf"] = max(0, ahead) }
+		}
+		if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
+			let behind = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), now))
+			if behind.isFinite { payload["lat"] = max(0, behind) }
+		}
+		if let event = it.accessLog()?.events.last {
+			let bps = event.indicatedBitrate > 0 ? event.indicatedBitrate : event.observedBitrate
+			if bps > 0 { payload["bps"] = Int(bps) }
+		}
+		if size.width > 0 {
+			payload["w"] = Int(size.width)
+			payload["h"] = Int(size.height)
+		}
+		payload["muted"] = p.isMuted
+		payload["paused"] = (p.rate == 0)
+		send(payload)
+	}
+
+	/// One failure is bad luck on a long path and the page will retry. Two in a
+	/// row on the same feed means the native decoder cannot play it, so hand the
+	/// picture back to hls.js instead of retrying forever.
+	private func reportError(_ detail: String) {
+		stopStats()
+		failures += 1
+		if failures >= 2 {
+			releasePlayer()
+			send(["t": "fallback"])
+			return
+		}
+		send(["t": "error", "msg": detail])
+	}
+
+	// MARK: - Geometry
+
+	private func applyRect() {
+		guard let v = videoView, stageRect.width > 1, stageRect.height > 1 else { return }
+		// Layer geometry animates by default, which during a live resize shows up
+		// as the picture lagging behind the window edge.
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		v.frame = stageRect
+		playerLayer?.frame = v.bounds
+		CATransaction.commit()
 	}
 
 	// The window can also be taken fullscreen by routes the page knows nothing
@@ -140,6 +473,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		host.autoresizesSubviews = true
 		host.wantsLayer = true
 		host.layer?.backgroundColor = backdrop.cgColor
+
+		// The picture goes in first, so the web view is drawn over it. Its frame
+		// is set from the rectangle the page reports and from nowhere else, which
+		// is why it carries no constraints of its own.
+		videoView = NSView(frame: .zero)
+		videoView.wantsLayer = true
+		videoView.layer?.backgroundColor = NSColor.clear.cgColor
+		videoView.isHidden = true
+		host.addSubview(videoView)
 
 		web.translatesAutoresizingMaskIntoConstraints = false
 		host.addSubview(web)
@@ -255,6 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	}
 
 	@objc private func hardReloadPage() {
+		releasePlayer()
 		web.reloadFromOrigin()
 	}
 
@@ -279,6 +622,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		}
 		NSWorkspace.shared.open(url)
 		decisionHandler(.cancel)
+	}
+
+	// A reload leaves an orphaned player running behind a page that no longer
+	// knows about it - audible, invisible, and impossible to stop.
+	func webView(_ webView: WKWebView, didStartProvisionalNavigation nav: WKNavigation!) {
+		releasePlayer()
 	}
 
 	// target="_blank" would otherwise be swallowed silently.
