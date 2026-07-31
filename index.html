@@ -423,7 +423,10 @@
   </header>
 
   <main class="stage">
-    <div class="screen mutedState" id="screen">
+    <!-- Sound is on from the first frame. The muted class is applied by script
+         only if a browser actually refuses unmuted autoplay; neither native
+         shell does, so on a television this never appears. -->
+    <div class="screen" id="screen">
       <div class="state" id="state">
         <div class="spinner" aria-hidden="true"></div>
         <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 1.8 20.6h20.4L12 3Z"/><path d="M12 10v4.3"/><path d="M12 17.7h.01"/></svg>
@@ -431,7 +434,7 @@
         <p class="stateSub" id="stateSub"></p>
         <button class="retryNow" id="retryNow" type="button">立即重试</button>
       </div>
-      <div class="hint" id="hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>点击画面可取消静音</span></div>
+      <div class="hint" id="hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/></svg><span>浏览器拦截了自动播放的声音，按任意键或点击画面即可开启</span></div>
       <video id="video" playsinline controls style="display:none"></video>
     </div>
   </main>
@@ -489,6 +492,6 @@
 
 <noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
 
-<script src="app.js?v=24" defer></script>
+<script src="app.js?v=25" defer></script>
 </body>
 </html>
