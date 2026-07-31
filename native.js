@@ -38,22 +38,78 @@
 (function(){
 	"use strict";
 
+	/* ---------- Say what was found ----------
+	   This layer used to disappear without a word when it found no channel, and
+	   that silence cost real time: a package that predates the player and a
+	   current one produce exactly the same page - no TV+ row, no message, no
+	   way to tell from the outside which one is installed. A component that can
+	   switch itself off has to leave a record of having done so.
+
+	   The record goes in the source popover footer, next to the sentence that
+	   explains where TV+ comes from, because that is where somebody looking for
+	   a missing TV+ row will already be. app.js only ever rewrites the list
+	   inside that popover, never the footer, so this survives the menu being
+	   built afterwards. */
+	function envLine(txt){
+		try{
+			var foot = document.querySelector("#sMenu .q-foot");
+			if(!foot) return;
+			var el = foot.querySelector(".q-env");
+			if(!el){
+				el = document.createElement("div");
+				el.className = "q-env";
+				el.style.marginTop = "7px";
+				el.style.opacity = ".85";
+				foot.appendChild(el);
+			}
+			el.textContent = txt;
+		}catch(e){}
+	}
+
 	/* ---------- Find a shell ---------- */
 	var post = null;
+	var shell = "";
 	try{
 		var mac = window.webkit && window.webkit.messageHandlers &&
 			window.webkit.messageHandlers.bbgPlayer;
-		if(mac) post = function(o){ try{ mac.postMessage(JSON.stringify(o)); }catch(e){} };
+		if(mac){
+			post = function(o){ try{ mac.postMessage(JSON.stringify(o)); }catch(e){} };
+			shell = "mac";
+		}
 	}catch(e){}
 	if(!post){
 		try{
 			var droid = window.BbgPlayer;
 			if(droid && typeof droid.post === "function"){
 				post = function(o){ try{ droid.post(JSON.stringify(o)); }catch(e){} };
+				shell = "android";
 			}
 		}catch(e){}
 	}
-	if(!post) return;
+
+	/* Readable by anything else that needs to know, and by a person reading the
+	   console. "" means a plain browser as far as this layer can tell. */
+	window.__bbgShell = shell;
+
+	if(!post){
+		/* An Android WebView announces itself with a wv token. Carrying that token
+		   while exposing no bridge is not an ordinary browser: it is our own shell
+		   from a build that predates the player, which is worth naming outright
+		   rather than describing as "no native support". */
+		var inWebView = false;
+		try{
+			inWebView = /;\s*wv[);]/.test(navigator.userAgent || "") ||
+				/\bwv\b/.test(navigator.userAgent || "");
+		}catch(e){}
+		envLine(inWebView
+			? "\u8fd0\u884c\u73af\u5883\uff1aapp \u5185\u58f3\uff0c\u4f46\u672a\u627e\u5230\u539f\u751f\u64ad\u653e\u6865\u2014\u2014\u88c5\u7684\u4ecd\u662f\u65e7\u7248\u5b89\u88c5\u5305\uff0cTV+ \u4e0d\u4f1a\u51fa\u73b0\u3002"
+			: "\u8fd0\u884c\u73af\u5883\uff1a\u666e\u901a\u6d4f\u89c8\u5668 \u00b7 hls.js \u89e3\u7801\uff0cTV+ \u53ea\u5728 app \u5185\u51fa\u73b0\u3002");
+		return;
+	}
+
+	envLine(shell === "mac"
+		? "\u8fd0\u884c\u73af\u5883\uff1aMac app \u00b7 \u539f\u751f\u89e3\u7801\u5df2\u5c31\u7eea\u3002"
+		: "\u8fd0\u884c\u73af\u5883\uff1a\u5b89\u5353 app \u00b7 \u539f\u751f\u89e3\u7801\u5df2\u5c31\u7eea\u3002");
 
 	var api = null;          /* handed over by app.js on the first start */
 	var live = false;        /* the native player owns the picture right now */
@@ -247,6 +303,9 @@
 			return true;
 		},
 		active: function(){ return live; },
+		/* app.js has to know whether this layer has given up, so that it waits for
+		   hls.js instead of assuming a player is already there. */
+		gaveUp: function(){ return dead; },
 		live: function(){ if(!live) return false; post({a:"live"}); return true; },
 		togglePlay: function(){ if(!live) return false; post({a:"toggle"}); return true; },
 		toggleMute: function(){ if(!live) return false; post({a:"mute", on: !muted}); return true; },
