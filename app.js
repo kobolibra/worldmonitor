@@ -47,6 +47,32 @@
     try{ localStorage.setItem("bbg.quality", v); }catch(e){}
   }
 
+  /* Sound on by default.
+
+     The muted start was inherited from ordinary web practice, where autoplay
+     with sound is refused until the page has seen a gesture, and the escape
+     hatch was a click on the picture. On a television that escape hatch does
+     not exist: a remote sends arrow keys, the focus ring covers the rail only,
+     and the picture is not a focusable thing, so the one control that could
+     restore sound was the one control a remote can never reach.
+
+     It was also unnecessary in the two places it hurt most. The Android shell
+     sets setMediaPlaybackRequiresUserGesture(false) and the macOS shell sets
+     mediaTypesRequiringUserActionForPlayback to none, so both allow unmuted
+     autoplay outright. Only a plain browser tab can still refuse, and that
+     refusal is detectable at play time - so ask for sound first and degrade
+     only if actually turned down. */
+  var wantSound = true;
+  try{
+    if(localStorage.getItem("bbg.sound") === "0") wantSound = false;
+  }catch(e){}
+  /* True only when the browser, not the viewer, imposed the silence. */
+  var forcedMute = false;
+  function saveSound(on){
+    wantSound = !!on;
+    try{ localStorage.setItem("bbg.sound", on ? "1" : "0"); }catch(e){}
+  }
+
   function $(id){ return document.getElementById(id); }
 
   var video    = $("video");
@@ -609,6 +635,35 @@
   }
   liveBtn.addEventListener("click", function(){ if(liveBtn.classList.contains("behind")) jumpToLive(); });
 
+  /* ---------- Starting playback with sound ----------
+     Ask for what the viewer actually wants, then deal with a refusal, rather
+     than pre-emptively surrendering to a policy that does not apply here.
+     A blocked autoplay is reported by rejecting the promise play() returns; it
+     is never thrown, so a try block around it sees nothing. Only in that
+     rejection do we mute, and only then is the tap-to-unmute hint shown - on a
+     television it would be advice that cannot be followed. */
+  function attemptPlay(){
+    video.muted = !wantSound;
+    screenEl.classList.toggle("mutedState", video.muted);
+    var p;
+    try{ p = video.play(); }catch(e){ p = null; }
+    if(!p || typeof p["catch"] !== "function") return;
+    p["catch"](function(){
+      if(!wantSound){
+        /* Muted and still refused: nothing left to concede. */
+        var m = video.play();
+        if(m && typeof m["catch"] === "function") m["catch"](noop);
+        return;
+      }
+      forcedMute = true;
+      video.muted = true;
+      screenEl.classList.add("mutedState");
+      var q = video.play();
+      if(q && typeof q["catch"] === "function") q["catch"](noop);
+      showHint();
+    });
+  }
+
   /* ---------- Playback ---------- */
   function playHls(){
     clearTimeout(retryTimer); clearInterval(countdownTimer);
@@ -631,9 +686,12 @@
     resetQuality();
     measuredBps = 0;
     fragSecs = 0;
-    video.muted = true;
+    /* Every restart is a fresh chance at sound: a refusal earlier in the
+       session does not mean the page is still ungestured now. */
+    forcedMute = false;
+    video.muted = !wantSound;
     try{ video.playbackRate = 1; }catch(e){}
-    screenEl.classList.add("mutedState");
+    screenEl.classList.toggle("mutedState", video.muted);
 
     if(window.Hls && window.Hls.isSupported()){
       hls = new window.Hls({
@@ -688,8 +746,7 @@
         retryCount = 0; netRecovery = 0; mediaRecovery = 0;
         clearState();
         buildQualityMenu();
-        video.play().catch(noop);
-        showHint();
+        attemptPlay();
       });
       hls.on(window.Hls.Events.LEVEL_SWITCHED, function(){
         measuredBps = 0;
@@ -720,7 +777,7 @@
       video.src = mySrc;
       video.addEventListener("loadedmetadata", function(){
         if(video.src !== mySrc) return;
-        retryCount = 0; clearState(); video.play().catch(noop); showHint();
+        retryCount = 0; clearState(); attemptPlay();
       }, {once:true});
       video.addEventListener("error", function(){
         if(video.src !== mySrc) return;
@@ -761,7 +818,10 @@
     try{ if(!video.muted) localStorage.setItem("bbg.volume", String(video.volume)); }catch(e){}
   });
   function unmute(){
-    if(video.style.display === "none" || !video.muted) return;
+    if(video.style.display === "none") return;
+    forcedMute = false;
+    saveSound(true);
+    if(!video.muted) return;
     video.muted = false;
     video.play().catch(noop);
     hintEl.classList.remove("show");
@@ -777,6 +837,12 @@
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
     wake();
+
+    /* If the browser imposed silence, any key is the gesture that lifts it -
+       including on a remote, where the picture cannot be reached at all. A
+       deliberate mute is left alone: forcedMute is only ever set by a refused
+       play, never by the viewer pressing M. */
+    if(forcedMute && video.muted && k !== "m") unmute();
 
     /* An open menu owns the keyboard; it has its own handler. */
     if(!qMenu.hidden || !sMenu.hidden){
@@ -811,7 +877,12 @@
       if(video.paused) video.play().catch(noop); else video.pause();
       return;
     }
-    if(k === "m"){ if(video.muted) unmute(); else video.muted = true; return; }
+    /* Remembered, so the choice survives a reload and a source change. */
+    if(k === "m" || k === "audiovolumemute"){
+      if(video.muted) unmute();
+      else { video.muted = true; forcedMute = false; saveSound(false); }
+      return;
+    }
     if(k === "f"){ toggleFullscreen(); return; }
     if(k === "l"){ jumpToLive(); return; }
     if(k === "s"){ e.preventDefault(); openMenu(sBtn, sMenu, sList); return; }
