@@ -5,9 +5,22 @@
 
   /* Parallel Bloomberg feeds. The L-bar graphics package is baked into the
      encoded picture, not an overlay, and nothing in the manifest declares it,
-     so it has to be a choice. ASIA leads because its origin is nearest. */
+     so it has to be a choice. ASIA leads because its origin is nearest.
+
+     The last two are a different animal. Everything above them is the feed the
+     bloomberg.com player uses: origin-served, rate limited for anonymous
+     viewers, and reached from here by dragging every segment across the
+     Pacific. TV+ is the same channel handed to Samsung, TCL and the other
+     television platforms as a free ad-supported channel, transcoded once by
+     the distributor and served from an ordinary global CDN with no reference
+     to bloomberg.com at all. It carries taller rungs and a steadier bitrate,
+     and it is what a set-top box is actually playing when its picture looks
+     better than ours. Two regional playouts are listed because they are
+     separate edges: whichever one the exit node is nearest to wins. */
   var SOURCES = [
     {id:"asia",    name:"ASIA",   note:"\u4e9a\u6d32 \u00b7 \u56de\u6e90\u6700\u8fd1", url:"https://www.bloomberg.com/media-manifest/streams/asia.m3u8"},
+    {id:"fastgb",  name:"TV+ FAST", note:"\u7535\u89c6\u5e73\u53f0\u6e90 \u00b7 \u82f1\u56fd\u8282\u70b9", url:"https://bloomberg-bloombergtv-1-gb.samsung.wurl.com/manifest/playlist.m3u8"},
+    {id:"fastit",  name:"TV+ ALT",  note:"\u7535\u89c6\u5e73\u53f0\u6e90 \u00b7 \u610f\u5927\u5229\u8282\u70b9", url:"https://bloomberg-bloombergtv-1-it.samsung.wurl.com/manifest/playlist.m3u8"},
     {id:"phoenix", name:"US ALT", note:"\u7f8e\u4e1c \u00b7 \u5e26\u884c\u60c5\u6761", url:"https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8"},
     {id:"us",      name:"US",     note:"\u7f8e\u56fd \u00b7 \u6570\u5b57\u7248",   url:"https://www.bloomberg.com/media-manifest/streams/us.m3u8"},
     {id:"eu",      name:"EUROPE", note:"\u6b27\u6d32\u9891\u9053",       url:"https://www.bloomberg.com/media-manifest/streams/eu.m3u8"},
