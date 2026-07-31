@@ -7,16 +7,10 @@
      encoded picture, not an overlay, and nothing in the manifest declares it,
      so it has to be a choice. ASIA leads because its origin is nearest.
 
-     The television distribution of this channel - the one a set-top box plays,
-     served from Samsung/Wurl rather than bloomberg.com - was tried here and
-     removed. It is unreachable from a web page for two independent reasons,
-     and neither is fixable from a static site. Its top rungs are HEVC, which
-     Media Source Extensions will not decode in Chrome or in an Android
-     WebView, and its edge sends no Access-Control-Allow-Origin, so hls.js is
-     refused the manifest before a codec is ever considered. A native player
-     hits neither wall, which is exactly why the set-top box looks better.
-     Reaching it would take a native decoder or a proxy of our own, not
-     another URL. Do not add those hosts back to this list. */
+     The television distribution of this channel is deliberately absent here.
+     Its top rungs are HEVC and its edge sends no Access-Control-Allow-Origin,
+     so hls.js can neither fetch nor decode it. native.js adds it back, but
+     only when a shell with a hardware decoder is present. */
   var SOURCES = [
     {id:"asia",    name:"ASIA",   note:"\u4e9a\u6d32 \u00b7 \u56de\u6e90\u6700\u8fd1", url:"https://www.bloomberg.com/media-manifest/streams/asia.m3u8"},
     {id:"phoenix", name:"US ALT", note:"\u7f8e\u4e1c \u00b7 \u5e26\u884c\u60c5\u6761", url:"https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8"},
@@ -24,6 +18,12 @@
     {id:"eu",      name:"EUROPE", note:"\u6b27\u6d32\u9891\u9053",       url:"https://www.bloomberg.com/media-manifest/streams/eu.m3u8"},
     {id:"aus",     name:"AU",     note:"\u6fb3\u6d32\u9891\u9053",       url:"https://www.bloomberg.com/media-manifest/streams/aus.m3u8"}
   ];
+
+  /* Present only inside our own shells; null in a browser tab. */
+  var NAT = null;
+  try{ NAT = window.__bbgNative || null; }catch(e){}
+  if(NAT && NAT.extraSources) SOURCES = SOURCES.concat(NAT.extraSources);
+
   function sourceById(id){
     for(var si = 0; si < SOURCES.length; si++) if(SOURCES[si].id === id) return SOURCES[si];
     return SOURCES[0];
@@ -718,6 +718,7 @@
     return (b && b.length) ? b.end(b.length - 1) : NaN;
   }
   function jumpToLive(){
+    if(NAT && NAT.live()) return;
     var e = liveEdge();
     if(!isFinite(e)) return;
     try{ video.currentTime = e; }catch(err){}
@@ -753,10 +754,31 @@
     });
   }
 
+  /* ---------- The handle handed to the native bridge ----------
+     Everything native.js needs to drive the same interface, and nothing more.
+     It is a handle rather than a set of globals so that the page keeps one
+     owner of its own DOM: the bridge asks, this file still decides. */
+  var NATIVE_API = {
+    video: video, screen: screenEl,
+    qBtn: qBtn, qMode: qMode, qRes: qRes, qList: qList, qFoot: qFoot, qSrc: qSrc,
+    statRate: statRate, statBuf: statBuf, statLat: statLat,
+    liveBtn: liveBtn, liveTxt: liveTxt,
+    itemHtml: itemHtml, closeQMenu: closeQMenu,
+    showLoading: showLoading, showError: showError, clearState: clearState,
+    scheduleRetry: scheduleRetry,
+    savePref: savePref,
+    pref: function(){ return prefQuality; },
+    wantSound: function(){ return wantSound; },
+    /* Used only when the native player gives up: start the same source again
+       through hls.js rather than leaving a black screen behind. */
+    restart: function(){ retryCount = 0; playHls(); }
+  };
+
   /* ---------- Playback ---------- */
   function playHls(){
     clearTimeout(retryTimer); clearInterval(countdownTimer);
-    if(window.Hls) return startPlayback();
+    /* A native player needs no hls.js at all, so do not wait for it. */
+    if(window.Hls || (NAT && !NAT.dead)) return startPlayback();
     showLoading(retryCount === 0 ? "\u6b63\u5728\u52a0\u8f7d\u64ad\u653e\u7ec4\u4ef6\u2026" : "\u6b63\u5728\u91cd\u65b0\u52a0\u8f7d\u64ad\u653e\u7ec4\u4ef6\u2026");
     var wait = window.__hlsReady || function(cb){ cb(false); };
     wait(function(ok){
@@ -781,6 +803,11 @@
     video.muted = !wantSound;
     try{ video.playbackRate = 1; }catch(e){}
     screenEl.classList.toggle("mutedState", video.muted);
+
+    /* Inside our own shells the picture belongs to a hardware decoder: no
+       remux in JavaScript, no MSE codec restrictions, no CORS check. Returning
+       true means the shell has taken it and everything below is skipped. */
+    if(NAT && NAT.start(streamUrl(), NATIVE_API)) return;
 
     if(window.Hls && window.Hls.isSupported()){
       hls = new window.Hls({
@@ -907,6 +934,13 @@
     try{ if(!video.muted) localStorage.setItem("bbg.volume", String(video.volume)); }catch(e){}
   });
   function unmute(){
+    if(NAT && NAT.active()){
+      forcedMute = false;
+      saveSound(true);
+      NAT.setMuted(false);
+      hintEl.classList.remove("show");
+      return;
+    }
     if(video.style.display === "none") return;
     forcedMute = false;
     saveSound(true);
@@ -930,6 +964,7 @@
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
     var wasHidden = body.classList.contains("idle");
+    var onNative = !!(NAT && NAT.active());
     wake();
 
     /* If the browser imposed silence, any key is the gesture that lifts it -
@@ -968,6 +1003,7 @@
     if(k === "enter"){
       if(onScreen()){
         e.preventDefault();
+        if(onNative){ NAT.togglePlay(); return; }
         if(video.muted) unmute();
         else if(video.paused) video.play().catch(noop);
         else video.pause();
@@ -984,11 +1020,13 @@
        k === "mediaplay" || k === "mediapause"){
       if(onButton && k.indexOf("media") !== 0) return;
       e.preventDefault();
+      if(onNative){ NAT.togglePlay(); return; }
       if(video.paused) video.play().catch(noop); else video.pause();
       return;
     }
     /* Remembered, so the choice survives a reload and a source change. */
     if(k === "m" || k === "audiovolumemute"){
+      if(onNative){ NAT.toggleMute(); return; }
       if(video.muted) unmute();
       else { video.muted = true; forcedMute = false; saveSound(false); }
       return;
@@ -1006,7 +1044,11 @@
   /* ---------- Telemetry ----------
      A latency figure is meaningless without the target it is judged against,
      which is exactly how a sixty second target went unnoticed. The tooltip
-     carries the target, the measured segment length and the playback rate. */
+     carries the target, the measured segment length and the playback rate.
+
+     While a native player owns the picture the video element is hidden, so
+     this loop stops and native.js fills the same rail from the shell's own
+     figures. */
   setInterval(function(){
     if(video.style.display === "none") return;
 
@@ -1039,6 +1081,7 @@
   /* Coming back to a backgrounded tab, the picture can be far behind. */
   document.addEventListener("visibilitychange", function(){
     if(document.hidden) return;
+    if(NAT && NAT.active()){ NAT.live(); return; }
     var l = latency();
     if(isFinite(l) && l > targetLatency() + 10) jumpToLive();
   });
