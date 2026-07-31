@@ -321,4 +321,28 @@
 				url:"https://bloomberg-bloombergtv-1-gb.samsung.wurl.com/manifest/playlist.m3u8"}
 		]
 	};
+
+	/* The same fact under the name app.js already reads.
+
+	   Its loader gate asks (NAT && !NAT.dead) to decide whether a player is
+	   already standing by and hls.js therefore need not be waited for. That
+	   field was never exported, so it read undefined, the negation was always
+	   true, and the gate answered yes even after this layer had switched itself
+	   off - at which point playHls() skipped the wait, and a fallback that
+	   happened before hls.js had landed arrived at a black screen.
+
+	   A getter rather than a copied value, because a snapshot taken here would
+	   read false for the rest of the session, which is the same bug wearing a
+	   different spelling. */
+	try{
+		Object.defineProperty(window.__bbgNative, "dead", {
+			get: function(){ return dead; },
+			enumerable: false,
+			configurable: true
+		});
+	}catch(e){
+		/* Neither shell is old enough for this to fail, but a plain field that is
+		   at least correct at start is better than an absent one. */
+		window.__bbgNative.dead = false;
+	}
 })();
