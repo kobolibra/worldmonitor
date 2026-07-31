@@ -52,9 +52,11 @@ android {
 			minifyEnabled false
 		}
 		release {
-			// Nothing to shrink: this module has no dependencies and one class.
-			// Leaving the optimiser off removes a whole category of release-only
-			// breakage for no measurable gain in an APK this size.
+			// The optimiser stays off. It would now have a library to chew on,
+			// but the bridge class is reached only from JavaScript through
+			// addJavascriptInterface - a call site no shrinker can see - so
+			// enabling it would mean maintaining keep rules to protect code that
+			// looks dead and is not. The saving is not worth that class of bug.
 			minifyEnabled false
 			shrinkResources false
 			debuggable false
@@ -70,9 +72,18 @@ android {
 	}
 }
 
-// No dependencies on purpose. Everything this app needs - WebView, the
-// fullscreen callback, the Material theme - is in the platform itself.
-// A zero-dependency APK is a few hundred KB instead of several MB, and it
-// has no transitive supply chain to audit.
+// media3 is the one thing the platform cannot supply.
+//
+// Android's own MediaPlayer speaks HLS, but badly: no variant list, no way to
+// cap the ladder, no latency figure, and no control over the live window - all
+// of which this app's controls are built on. ExoPlayer exposes every one of
+// them, and it is what the set-top box applications that play this channel
+// well are using.
+//
+// Two artifacts only. media3-ui is deliberately absent: its PlayerView brings a
+// full control surface of its own, and the controls here are the web page's.
+// The picture is drawn straight into a TextureView instead.
 dependencies {
+	implementation 'androidx.media3:media3-exoplayer:1.3.1'
+	implementation 'androidx.media3:media3-exoplayer-hls:1.3.1'
 }
