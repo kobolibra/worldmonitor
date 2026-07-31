@@ -8,17 +8,16 @@
    Why a native player exists at all. hls.js decodes through Media Source
    Extensions: every transport stream segment is fetched by JavaScript,
    remuxed to fragmented MP4 in JavaScript, and only then handed to the
-   decoder. That pipeline cannot play HEVC in Chrome or in an Android WebView,
-   it is subject to the same origin policy so a CDN that sends no
-   Access-Control-Allow-Origin is simply unreachable, and the remux itself
-   costs real work on every segment - which is why the picture holds up worse
-   here than in a set-top box application playing the identical feed.
+   decoder. That pipeline is subject to the same origin policy, it cannot play
+   HEVC in Chrome or in an Android WebView, and the remux itself costs real
+   work on every segment - which is why the picture holds up worse here than in
+   a set-top box application playing the identical feed.
 
-   AVPlayer on macOS and ExoPlayer on Android have none of those three
-   problems. They hit the hardware decoder directly, they perform no CORS
-   check, and they speak HLS natively. So inside the two shells the picture is
-   handed to them, and the page keeps everything else: the header, the clocks,
-   the source and quality menus, the telemetry rail, the remote navigation.
+   AVPlayer on macOS and ExoPlayer on Android have none of those problems. They
+   hit the hardware decoder directly, they perform no CORS check, and they speak
+   HLS natively. So inside the two shells the picture is handed to them, and the
+   page keeps everything else: the header, the clocks, the source and quality
+   menus, the telemetry rail, the remote navigation.
 
    The division of labour:
 
@@ -39,21 +38,33 @@
 (function(){
 	"use strict";
 
+	/* A source that this file used to add has been withdrawn (see EXTRA below).
+	   Anyone who selected it still has that choice sitting in local storage, and
+	   app.js reads it a moment from now, so retire the stored value here - before
+	   app.js runs - instead of leaving it to resolve to a source that no longer
+	   exists. Cheap, idempotent, and it runs on every path including the ones
+	   that return early below. */
+	try{
+		if(localStorage.getItem("bbg.source") === "tvplus"){
+			localStorage.setItem("bbg.source", "asia");
+		}
+	}catch(e){}
+
 	/* ---------- Say what was found, and what happened ----------
 	   This layer used to disappear without a word when it found no channel, and
 	   that silence cost real time: a package that predates the player and a
-	   current one produce exactly the same page - no TV+ row, no message, no
-	   way to tell from the outside which one is installed. A component that can
-	   switch itself off has to leave a record of having done so.
+	   current one produce exactly the same page - no message, no way to tell from
+	   the outside which one is installed. A component that can switch itself off
+	   has to leave a record of having done so.
 
 	   Two lines are kept. The first names the shell that was found; the second
 	   says what the native player then did. Between them, "never started",
 	   "running" and "gave up and why" stop being indistinguishable.
 
-	   They go in the source popover footer, next to the sentence that explains
-	   where TV+ comes from, because that is where somebody looking for a missing
-	   TV+ row will already be. app.js only ever rewrites the list inside that
-	   popover, never the footer, so these survive the menu being rebuilt. */
+	   They go in the source popover footer, because that is where somebody
+	   wondering what the app is doing with the picture will already be. app.js
+	   only ever rewrites the list inside that popover, never the footer, so these
+	   survive the menu being rebuilt. */
 	function footLine(cls, txt){
 		try{
 			var foot = document.querySelector("#sMenu .q-foot");
@@ -108,8 +119,8 @@
 				/\bwv\b/.test(navigator.userAgent || "");
 		}catch(e){}
 		envLine(inWebView
-			? "\u8fd0\u884c\u73af\u5883\uff1aapp \u5185\u58f3\uff0c\u4f46\u672a\u627e\u5230\u539f\u751f\u64ad\u653e\u6865\u2014\u2014\u88c5\u7684\u4ecd\u662f\u65e7\u7248\u5b89\u88c5\u5305\uff0cTV+ \u4e0d\u4f1a\u51fa\u73b0\u3002"
-			: "\u8fd0\u884c\u73af\u5883\uff1a\u666e\u901a\u6d4f\u89c8\u5668 \u00b7 hls.js \u89e3\u7801\uff0cTV+ \u53ea\u5728 app \u5185\u51fa\u73b0\u3002");
+			? "\u8fd0\u884c\u73af\u5883\uff1aapp \u5185\u58f3\uff0c\u4f46\u672a\u627e\u5230\u539f\u751f\u64ad\u653e\u6865\u2014\u2014\u88c5\u7684\u4ecd\u662f\u65e7\u7248\u5b89\u88c5\u5305\uff0c\u753b\u9762\u8fd8\u5728\u8d70 hls.js\u3002"
+			: "\u8fd0\u884c\u73af\u5883\uff1a\u666e\u901a\u6d4f\u89c8\u5668 \u00b7 hls.js \u89e3\u7801\u3002");
 		return;
 	}
 
@@ -126,14 +137,32 @@
 	var lastRect = "";
 	var startedUrl = "";     /* what the native player was last asked to open */
 
-	/* The television distribution of the channel, offered only inside a shell.
-	   Its top rungs are HEVC and its edge sends no CORS header, so a browser
-	   engine cannot play it under any circumstances - which is exactly why the
-	   fallback below has to know that this feed is not a candidate for hls.js. */
-	var EXTRA = [
-		{id:"tvplus", name:"TV+", note:"\u7535\u89c6\u7248 \u00b7 \u539f\u751f\u89e3\u7801",
-			url:"https://bloomberg-bloombergtv-1-gb.samsung.wurl.com/manifest/playlist.m3u8"}
-	];
+	/* ---------- Sources that only exist inside a shell ----------
+	   Empty, deliberately, and kept as a mechanism rather than deleted.
+
+	   The reason it exists: a hardware decoder can play things a browser engine
+	   refuses - HEVC, and any edge that sends no Access-Control-Allow-Origin -
+	   so a shell can legitimately offer a feed the web page cannot. The
+	   television distribution of the channel,
+
+	     https://bloomberg-bloombergtv-1-gb.samsung.wurl.com/manifest/playlist.m3u8
+
+	   was offered here on exactly that reasoning. It does not work. hls.js could
+	   not open it, which was expected and was the whole point; but AVPlayer and
+	   ExoPlayer cannot open it either, from this network, which kills the
+	   premise. Its manifest is reachable from a public prober, so the edge is
+	   alive and simply will not serve this path - geography, or the exit address,
+	   or both. Whatever the cause, an entry that cannot play on any of the three
+	   engines is not a source, it is a dead end with a name, and it stayed in the
+	   menu long enough to look like a defect in the app instead.
+
+	   The native player was never the part that failed here and is not going
+	   away: the reason for it was always system decoding of the official feeds,
+	   which is where the picture and the smoothness actually improve.
+
+	   If a shell-only feed is ever added again, the bar is a manifest that has
+	   been observed to play on the target device - not one that merely resolves. */
+	var EXTRA = [];
 	function nativeOnly(url){
 		for(var i = 0; i < EXTRA.length; i++){ if(EXTRA[i].url === url) return EXTRA[i]; }
 		return null;
@@ -299,14 +328,13 @@
 
 			var only = nativeOnly(startedUrl);
 			if(only){
-				/* Handing this URL to hls.js produces an endless sequence of network
-				   errors and retries - the CDN sends no CORS header, so the request
-				   never even reaches a decoder - and the page would sit on "network
-				   interrupted, recovering" for as long as it is left open, with
-				   nothing on screen to say the chosen source can never work here.
-				   Say so once and stop instead. */
+				/* Handing such a URL to hls.js produces an endless sequence of network
+				   errors and retries - the request never even reaches a decoder - and
+				   the page would sit on "network interrupted, recovering" for as long
+				   as it is left open, with nothing on screen to say the chosen source
+				   can never work here. Say so once and stop instead. */
 				noteLine("\u539f\u751f\u64ad\u653e\uff1a" + only.name +
-					" \u6253\u4e0d\u5f00\uff0c\u5df2\u505c\u6b62\u3002\u8fd9\u4e00\u8def\u662f HEVC\uff0c\u56de\u6e90\u4e5f\u4e0d\u53d1 CORS \u5934\uff0chls.js \u63a5\u4e0d\u4e86\u3002");
+					" \u6253\u4e0d\u5f00\uff0c\u5df2\u505c\u6b62\u3002");
 				api.showLoading("\u65e0\u6cd5\u6253\u5f00 " + only.name, "");
 				api.showError(only.name +
 					" \u53ea\u80fd\u7531\u7cfb\u7edf\u89e3\u7801\u5668\u64ad\u653e\uff0c\u521a\u624d\u6ca1\u80fd\u6253\u5f00\u3002\u8bf7\u5728\u300c\u4fe1\u53f7\u6e90\u300d\u91cc\u6362\u4e00\u4e2a\uff0c\u6bd4\u5982 ASIA\u3002");
