@@ -224,6 +224,14 @@
         control, so on a desktop the two bars would never fade - the exact
         complaint that fullscreen "only hides the bars" was in fact fullscreen
         not hiding them at all. Entering now drops focus and fades at once.
+     6. That refusal was then only lifted for a device recognised as a
+        television. Recognition is a guess - the ?tv=1 flag depends on Android
+        reporting a television UI mode, and the user agent list is a list of
+        names - so on any set-top box that guesses wrong, the first press of a
+        remote moved focus onto a rail button and the chrome was pinned open
+        forever after. Nothing may depend on that guess: whatever the device,
+        an idle period releases the focused control and hides the bars, and the
+        focus is handed straight back when they return.
 
      A remote is also not a keyboard: fullscreen used to exist only as an F key
      binding, which on a television means not at all. */
@@ -233,7 +241,9 @@
   var idleTimer = null;
 
   /* The host app appends ?tv=1 when Android reports a television UI mode; the
-     user agent test is only a fallback for a plain browser on a TV stick. */
+     user agent test is only a fallback for a plain browser on a TV stick.
+     Treat this as a hint for sizing, never as a precondition for a control
+     working at all. */
   var isTv = /(^|[?&])tv=1(&|$)/.test(location.search) ||
     /Android TV|Google TV|GoogleTV|SMART-TV|SmartTV|BRAVIA|AFT[A-Z]|CrKey|Web0S|Tizen/i.test(navigator.userAgent || "");
 
@@ -242,22 +252,41 @@
   var inWebViewShell = /;\s*wv[);]/.test(navigator.userAgent || "") ||
     /\bwv\b/.test(navigator.userAgent || "");
 
+  /* The control the idle timer took focus away from, so the next press of a
+     remote resumes from where the viewer was rather than snapping back to the
+     first button on the rail. */
+  var parkedFocus = null;
+
   function inCinema(){ return body.classList.contains("cinema"); }
+  function isCtrl(el){
+    return !!(el && el.classList &&
+      (el.classList.contains("q-btn") || el.classList.contains("live")));
+  }
   function sleep(){
     if(!inCinema()) return;
+    /* An open menu is an active conversation; never pull it out from under. */
     if(!qMenu.hidden || !sMenu.hidden) return;
     var a = document.activeElement;
-    var onControl = !!(a && a.classList && (a.classList.contains("q-btn") || a.classList.contains("live")));
-    if(onControl){
+    if(isCtrl(a)){
       /* With a remote, focus lives on a control permanently, so refusing to
-         hide while anything is focused would mean never hiding. */
-      if(!isTv) return;
+         hide while something is focused would mean never hiding again after
+         the first button press. Let it go instead, and remember it. */
+      parkedFocus = a;
       try{ a.blur(); }catch(e){}
     }
     body.classList.add("idle");
   }
   function wake(){
+    var wasHidden = body.classList.contains("idle");
     body.classList.remove("idle");
+    if(wasHidden && parkedFocus){
+      /* Only if nothing else has taken focus in the meantime. */
+      var a = document.activeElement;
+      if(!a || a === body || a === document.documentElement){
+        try{ parkedFocus.focus(); }catch(e){}
+      }
+    }
+    parkedFocus = null;
     clearTimeout(idleTimer);
     if(inCinema()) idleTimer = setTimeout(sleep, IDLE_MS);
   }
@@ -303,10 +332,7 @@
        and let go of the button that was just clicked so that hiding is not
        refused. Any movement, tap or key brings both bars straight back. */
     if(on){
-      if(!isTv){
-        var a = document.activeElement;
-        if(a && a !== body && a.blur){ try{ a.blur(); }catch(e){} }
-      }
+      parkedFocus = null;
       clearTimeout(idleTimer);
       idleTimer = setTimeout(sleep, ENTER_MS);
     }
@@ -836,6 +862,7 @@
   document.addEventListener("keydown", function(e){
     if(e.metaKey || e.ctrlKey || e.altKey) return;
     var k = (e.key || "").toLowerCase();
+    var wasHidden = body.classList.contains("idle");
     wake();
 
     /* If the browser imposed silence, any key is the gesture that lifts it -
@@ -847,6 +874,15 @@
     /* An open menu owns the keyboard; it has its own handler. */
     if(!qMenu.hidden || !sMenu.hidden){
       if(k === "escape") closeAllMenus();
+      return;
+    }
+
+    /* The press that brings the chrome back does nothing else. Otherwise the
+       same press would also walk the focus, which on a remote means the bars
+       reappear already one button further along than the viewer left them. */
+    if(wasHidden && (k === "arrowleft" || k === "arrowright" || k === "arrowup" || k === "arrowdown")){
+      e.preventDefault();
+      if(!isCtrl(document.activeElement)) focusRail();
       return;
     }
 
@@ -887,6 +923,11 @@
     if(k === "l"){ jumpToLive(); return; }
     if(k === "s"){ e.preventDefault(); openMenu(sBtn, sMenu, sList); return; }
   });
+
+  /* A control that takes focus by any other route - a click, Tab, a menu
+     closing - also has to restart the countdown, or the chrome would be left
+     showing until the next key or movement. */
+  document.addEventListener("focusin", function(){ wake(); });
 
   /* ---------- Telemetry ----------
      A latency figure is meaningless without the target it is judged against,
