@@ -134,6 +134,7 @@
 	var tracks = [];         /* [{h,w,bps}] reported by the shell, tallest first */
 	var lockedH = null;      /* the height the viewer asked for, null for auto */
 	var muted = false;
+	var paused = false;
 	var lastRect = "";
 	var startedUrl = "";     /* what the native player was last asked to open */
 
@@ -170,11 +171,30 @@
 
 	/* The page has to stop painting its own backdrop, or it would cover the
 	   layer the picture is drawn on. The bars keep their own translucent
-	   surfaces, so they still read against moving video. */
+	   surfaces, so they still read against moving video.
+
+	   The rest of this sheet is the hover control bar built below. */
 	var css = document.createElement("style");
 	css.textContent =
 		"html.native,html.native body{background:transparent !important;}" +
-		"html.native .ambient{display:none !important;}";
+		"html.native .ambient{display:none !important;}" +
+		".nbar{position:absolute;left:50%;bottom:16px;z-index:6;display:flex;gap:6px;" +
+		"padding:6px;border-radius:14px;border:1px solid rgba(255,255,255,.14);" +
+		"background:rgba(8,10,14,.74);-webkit-backdrop-filter:blur(14px);" +
+		"backdrop-filter:blur(14px);box-shadow:0 8px 26px rgba(0,0,0,.42);" +
+		"opacity:0;pointer-events:none;" +
+		"transform:translateX(-50%) translateY(8px);" +
+		"transition:opacity .16s ease,transform .16s ease;}" +
+		".screen:hover .nbar,.nbar:focus-within{opacity:1;pointer-events:auto;" +
+		"transform:translateX(-50%) translateY(0);}" +
+		".nbar button{appearance:none;-webkit-appearance:none;border:0;" +
+		"background:transparent;color:#f4f6f8;font:inherit;font-size:12px;" +
+		"letter-spacing:.02em;padding:7px 13px;border-radius:9px;cursor:pointer;}" +
+		".nbar button:hover{background:rgba(255,255,255,.13);}" +
+		".nbar button:active{background:rgba(255,255,255,.2);}" +
+		/* A television has no pointer, the bar could never be revealed, and its
+		   buttons would only add stops to the remote's path across the page. */
+		"body.tv .nbar{display:none !important;}";
 	document.head.appendChild(css);
 
 	function rate(bps){
@@ -205,41 +225,105 @@
 	   wiring individually. */
 	setInterval(sendRect, 400);
 
-	/* ---------- Clicking the picture ----------
-	   Every control on this page was wired to the video element, which is the
-	   right thing to do right up until the picture stops coming out of it. In
-	   native mode the element is emptied and hidden on purpose - that is what
-	   stops app.js running a second telemetry loop and a second unmute path
-	   against a decoder that is no longer playing anything - and every handler
-	   still bound to it keeps working perfectly on nothing at all. A click on
-	   the stage then reaches app.js, which pauses an element that holds no
-	   video, and the real player carries on. Nothing errors; the control simply
-	   stops existing, which is worse.
+	/* ---------- Controls on the picture ----------
+	   Everything a person can do to the picture with a mouse was, until now,
+	   supplied by WebKit: hover the video element and its own control bar rises
+	   out of the bottom edge, with play, pause, volume and a fullscreen button.
+	   Not one line of this page ever asked for that bar. It came with the
+	   element.
 
-	   The rail buttons were all given native routes when the player was added.
-	   This one was missed because it is not a button - it is the whole picture,
-	   and the picture is the most obvious thing on the page to click.
+	   Native playback empties and hides that element - deliberately, so that
+	   app.js does not run a second telemetry loop and a second unmute path
+	   against a decoder that is no longer playing anything - and WebKit's bar
+	   goes with it. The keyboard survived, because those shortcuts are bound to
+	   the document. The mouse did not, so the picture became something that can
+	   only be operated by somebody who knows the shortcuts.
+
+	   Hence two additions, both of them only in native mode:
+
+	     - a click anywhere on the picture, handled below;
+	     - this bar, which appears on hover exactly where WebKit's used to.
+
+	   There is no scrubber on it. WebKit drew one because a video element always
+	   has a timeline; a live channel has no position to seek to and nowhere to
+	   seek from, which is what the LIVE button in the rail is for.
+
+	   The buttons carry tabIndex -1 on purpose. The remote's path across this
+	   page is a deliberate three-row arrangement, and silently adding two stops
+	   to it would be a regression for the television in exchange for a bar the
+	   television cannot even show. */
+	var bar = null;
+	var btnPlay = null;
+	var btnMute = null;
+
+	function barButton(label, onClick){
+		var b = document.createElement("button");
+		b.type = "button";
+		b.tabIndex = -1;
+		b.textContent = label;
+		b.addEventListener("click", function(e){
+			e.preventDefault();
+			e.stopPropagation();
+			onClick();
+		});
+		return b;
+	}
+
+	function buildBar(){
+		if(bar || !api || !api.screen) return;
+		bar = document.createElement("div");
+		bar.className = "nbar";
+
+		btnPlay = barButton("\u6682\u505c", function(){ post({a:"toggle"}); });
+		btnMute = barButton("\u9759\u97f3", function(){ post({a:"mute", on: !muted}); });
+		/* Deliberately the page's own fullscreen control rather than a second
+		   implementation of it. That button already knows to ask the shell to
+		   take the window fullscreen rather than expanding an element inside a
+		   window that stays put, which was a long enough bug to earn the rule. */
+		var btnFull = barButton("\u5168\u5c4f", function(){
+			var f = document.getElementById("fsBtn");
+			if(f) f.click();
+		});
+
+		bar.appendChild(btnPlay);
+		bar.appendChild(btnMute);
+		bar.appendChild(btnFull);
+		api.screen.appendChild(bar);
+		syncBar();
+	}
+
+	function syncBar(){
+		if(btnPlay) btnPlay.textContent = paused ? "\u64ad\u653e" : "\u6682\u505c";
+		if(btnMute){
+			btnMute.textContent = muted
+				? "\u53d6\u6d88\u9759\u97f3" : "\u9759\u97f3";
+		}
+	}
+
+	/* A click on the picture itself.
 
 	   Bound on the document in the capture phase so it runs before anything
-	   app.js has on the stage itself. At the target node capture and bubble
-	   listeners fire in registration order, so binding to the stage would put
-	   this second, behind a handler already registered there. */
+	   app.js has on the stage. At the target node capture and bubble listeners
+	   fire in registration order, so binding to the stage would put this second,
+	   behind a handler already registered there - one that operates the hidden
+	   video element and therefore does nothing at all. */
 	document.addEventListener("click", function(e){
 		if(!live || !api || !api.screen) return;
 		var t = e.target;
 		if(!t || !api.screen.contains(t)) return;
-		/* The retry button, and anything else genuinely interactive that is drawn
-		   over the picture, must keep its own click. */
+		/* The bar's own buttons, the retry button, and anything else genuinely
+		   interactive drawn over the picture, keep their own click. */
 		try{
 			if(t.closest && t.closest("button,a,input,select,textarea,[role='button'],#state")) return;
 		}catch(err){}
 		e.preventDefault();
 		e.stopPropagation();
-		/* Silent picture: the first click is what everybody means by it. */
+		/* A silent picture: the first click is what everybody means by it. */
 		if(muted){
 			muted = false;
 			post({a:"mute", on:false});
 			api.screen.classList.remove("mutedState");
+			syncBar();
 			return;
 		}
 		post({a:"toggle"});
@@ -306,7 +390,9 @@
 	   filled from here instead, with the same wording and the same thresholds. */
 	function onStats(d){
 		muted = !!d.muted;
+		paused = !!d.paused;
 		api.screen.classList.toggle("mutedState", muted);
+		syncBar();
 
 		api.statRate.textContent = d.bps
 			? ("\u7801\u7387 " + (d.bps >= 1000000
@@ -365,6 +451,14 @@
 			live = false;
 			document.documentElement.classList.remove("native");
 			post({a:"stop"});
+			/* WebKit's own control bar comes back with the video element, so this
+			   one has to go or the picture would carry two. */
+			if(bar && bar.parentNode){
+				bar.parentNode.removeChild(bar);
+				bar = null;
+				btnPlay = null;
+				btnMute = null;
+			}
 
 			var only = nativeOnly(startedUrl);
 			if(only){
@@ -404,9 +498,11 @@
 			tracks = [];
 			lockedH = null;
 			lastRect = "";
+			paused = false;
 			api.qBtn.disabled = true;
 			api.qMode.textContent = "\u81ea\u52a8";
 			api.qRes.textContent = "\u2014";
+			buildBar();
 			post({a:"play", url:url, muted: !api.wantSound()});
 			sendRect();
 			return true;
