@@ -205,6 +205,46 @@
 	   wiring individually. */
 	setInterval(sendRect, 400);
 
+	/* ---------- Clicking the picture ----------
+	   Every control on this page was wired to the video element, which is the
+	   right thing to do right up until the picture stops coming out of it. In
+	   native mode the element is emptied and hidden on purpose - that is what
+	   stops app.js running a second telemetry loop and a second unmute path
+	   against a decoder that is no longer playing anything - and every handler
+	   still bound to it keeps working perfectly on nothing at all. A click on
+	   the stage then reaches app.js, which pauses an element that holds no
+	   video, and the real player carries on. Nothing errors; the control simply
+	   stops existing, which is worse.
+
+	   The rail buttons were all given native routes when the player was added.
+	   This one was missed because it is not a button - it is the whole picture,
+	   and the picture is the most obvious thing on the page to click.
+
+	   Bound on the document in the capture phase so it runs before anything
+	   app.js has on the stage itself. At the target node capture and bubble
+	   listeners fire in registration order, so binding to the stage would put
+	   this second, behind a handler already registered there. */
+	document.addEventListener("click", function(e){
+		if(!live || !api || !api.screen) return;
+		var t = e.target;
+		if(!t || !api.screen.contains(t)) return;
+		/* The retry button, and anything else genuinely interactive that is drawn
+		   over the picture, must keep its own click. */
+		try{
+			if(t.closest && t.closest("button,a,input,select,textarea,[role='button'],#state")) return;
+		}catch(err){}
+		e.preventDefault();
+		e.stopPropagation();
+		/* Silent picture: the first click is what everybody means by it. */
+		if(muted){
+			muted = false;
+			post({a:"mute", on:false});
+			api.screen.classList.remove("mutedState");
+			return;
+		}
+		post({a:"toggle"});
+	}, true);
+
 	/* ---------- Quality ----------
 	   Built from the variants the native player actually reports, so the list is
 	   the feed's real ladder rather than a guess. A pick is a cap, which is what
