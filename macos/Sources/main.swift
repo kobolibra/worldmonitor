@@ -263,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		variantURLs = [:]
 		pinnedHeight = 0
 		sentTracks = false
+		failures = 0
 		// requestedHeight deliberately survives: a quality the viewer chose is a
 		// standing preference, not something to forget because they changed feed.
 		open(u, startMuted: startMuted)
@@ -387,7 +388,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// The cost is honest and intended: a pinned rung the network cannot sustain
 	/// will stall instead of quietly degrading, and changing rungs costs a short
 	/// reconnect because it is a different URL. Automatic remains the setting
-	/// that adapts.
+	/// that adapts. What is not acceptable is a pinned rung costing the native
+	/// path altogether, which is what reportError now prevents.
 	private func applyRequestedLevel() {
 		guard let it = item else { return }
 
@@ -430,12 +432,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	private func fetchVariants(_ url: URL) {
 		var request = URLRequest(url: url)
 		request.timeoutInterval = 10
-		let task = URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+		let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
 			guard let data = data,
 				let text = String(data: data, encoding: .utf8)
 			else { return }
 			let parsed = AppDelegate.parseMaster(text)
 			if parsed.isEmpty { return }
+
+			// Resolve each rung's address against the URL the playlist actually
+			// came from, not the one that was asked for.
+			//
+			// These feeds are published on bloomberg.com and redirect to a CDN,
+			// and the addresses inside a playlist are relative to wherever the
+			// file landed. Resolving them against the request URL yields
+			// perfectly plausible addresses on the wrong host, every one of them
+			// a 404. Nothing about that failure names its cause: the player just
+			// cannot open the rung, fails twice, and the whole native path is
+			// handed back to hls.js.
+			let base = response?.url ?? url
 
 			var list: [[String: Any]] = []
 			var map: [Int: URL] = [:]
@@ -444,7 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 				if v.h <= 0 || seen.contains(v.h) { continue }
 				seen.insert(v.h)
 				list.append(["h": v.h, "w": v.w, "bps": v.bps])
-				if let resolved = URL(string: v.uri, relativeTo: url)?.absoluteURL {
+				if let resolved = URL(string: v.uri, relativeTo: base)?.absoluteURL {
 					map[v.h] = resolved
 				}
 			}
@@ -608,6 +622,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// picture back to hls.js instead of retrying forever.
 	private func reportError(_ detail: String) {
 		stopStats()
+
+		// Unless a rung is pinned, in which case the pin is the first suspect and
+		// giving up the whole native path is far too large a response to it. A
+		// rung's own playlist is a second address that can be wrong, expire, or
+		// simply be withdrawn by the feed while the master beside it stays
+		// perfectly playable - and the viewer loses hardware decoding, HEVC and
+		// the CORS-free path over a quality preference. So drop the pin, forget
+		// this feed's ladder so nothing re-pins from it, and reopen the master.
+		// The height stays requested and is applied as a ceiling from open().
+		if pinnedHeight != 0, let master = masterURL {
+			pinnedHeight = 0
+			variantURLs = [:]
+			open(master, startMuted: muted)
+			return
+		}
+
 		failures += 1
 		if failures >= 2 {
 			releasePlayer()
