@@ -80,31 +80,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
 	// MARK: Buffering
 	//
-	// These two numbers are one number.
+	// Left to AVFoundation, deliberately, and this is the second time that has
+	// had to be learned.
 	//
-	// On a live stream the video ahead of the playhead is the video between the
-	// playhead and the live edge, because nothing past the edge has been made
-	// yet. So the cushion that absorbs a hiccup is not something the player can
-	// be told to accumulate - it is bought, once, by standing further back. A
-	// player sitting two seconds behind live has two seconds of cushion and no
-	// setting can give it more.
+	// This app was measured smooth on exactly one configuration - several Mbps,
+	// a few seconds buffered, under ten seconds behind live - and that
+	// configuration set nothing here beyond the live offset below. Two later
+	// attempts to improve on it both made it materially worse:
 	//
-	// Build 11 asked for thirty seconds of buffer while also releasing the
-	// player to ride the edge, and got 7.9s buffered at 2.1s behind live, on the
-	// bottom rung of the ladder at 400 kbps - riding the edge leaves no room to
-	// prefetch, so the throughput estimate collapses and the ladder collapses
-	// with it.
+	//   build 11  switched off automaticallyPreservesTimeOffsetFromLive, so the
+	//             player rode the live edge. There is nothing past the edge to
+	//             prefetch, so the throughput estimate collapsed and the ladder
+	//             went with it: 400 kbps at 2.1s behind live.
+	//
+	//   build 12  restored the offset but also set
+	//             preferredForwardBufferDuration to 24s. That reads like "be
+	//             more resilient" and behaves like "prefer whichever rung fills
+	//             fastest", because a standing forward-buffer requirement is a
+	//             promise the adaptive logic has to keep and the bottom rung
+	//             keeps it most cheaply: 24.3s buffered, still 400 kbps.
+	//
+	// The pattern in both is the same. Each knob was read as a statement about
+	// safety and is really a statement about which rung to prefer. The framework
+	// balances these against each other with far more information than this
+	// process has - it can see segment timings, it cannot be told about them.
+	//
+	// So the only thing set is where to stand relative to the live edge, which
+	// is a genuine editorial choice and not a performance hint.
 
-	/// How far behind the live edge to sit. This is the real cushion.
-	private let targetOffset = 24.0
-	/// What to ask the item to hold ahead of the playhead. Kept equal to the
-	/// offset deliberately: a larger figure is a request for video that does not
-	/// exist, and reads in the code as though it achieved something.
-	private let forwardBuffer = 24.0
-	/// A feed that has produced nothing at all by now is not going to. Generous
-	/// on purpose: calling failure on a slow path that would have opened costs a
-	/// handover to the slower engine and then a second cold start.
-	private let startupDeadline = 30.0
+	/// How far behind the live edge to sit. Matches liveSyncDuration in the web
+	/// player's hls.js configuration, so both paths feel alike.
+	private let targetOffset = 18.0
+	/// A feed that has produced nothing at all by now is not going to.
+	private let startupDeadline = 20.0
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		buildMenuBar()
@@ -272,21 +280,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		let asset = AVURLAsset(url: u)
 		let playerItem = AVPlayerItem(asset: asset)
 
-		// Take up position behind the live edge, and hold it.
+		// Take up position behind the live edge and hold it.
 		//
-		// Holding it is not free: the only ways to recover lost time are to play
-		// slightly faster or to skip, and both spend buffer. That cost is real,
-		// and it is the reason build 11 switched this off. Switching it off was a
-		// mistake, because the alternative is not "keep the buffer" - it is having
-		// no buffer at all. Without this the player drifts up to the live edge and
-		// stays there, where there is nothing ahead of it to hold.
+		// Holding it is not free - recovering lost time means playing slightly
+		// faster or skipping, and both spend buffer - which is why build 11
+		// switched it off. That was backwards. The alternative to occasionally
+		// spending the cushion is not keeping it, it is never having one: without
+		// this the player drifts up to the live edge and stays there, with
+		// nothing ahead of it to hold and nothing to prefetch into.
 		playerItem.automaticallyPreservesTimeOffsetFromLive = true
 		playerItem.configuredTimeOffsetFromLive =
 			CMTime(seconds: targetOffset, preferredTimescale: 600)
 
-		// Fill that distance rather than leaving it as slack the framework may or
-		// may not use.
-		playerItem.preferredForwardBufferDuration = forwardBuffer
+		// preferredForwardBufferDuration is deliberately not set here. See the
+		// buffering note above: it does not mean "be safer", it means "prefer the
+		// rung that fills fastest", and it pinned this feed to 400 kbps.
 
 		// If a height was picked but this playlist is the master - because the
 		// ladder has not been read yet - a ceiling is at least better than
@@ -300,17 +308,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		p.isMuted = muted
 		p.volume = 1
 
-		// Wait until there is enough to play through, instead of starting on the
-		// first frame available.
+		// Start on the first frame available rather than holding out for a
+		// cushion first.
 		//
-		// This was false, to get a picture up sooner. It does do that - and then
-		// it keeps doing it, on every rebuffer, for the rest of the session,
-		// because the setting is not about the first frame but about whether the
-		// player is ever allowed to wait. A couple of seconds at the start buys a
-		// stream that does not break up, which is the trade anyone would make.
-		// hls.js was never configured the other way on this page either:
-		// lowLatencyMode is off there for the same reason.
-		p.automaticallyWaitsToMinimizeStalling = true
+		// Build 11 set this to true, reasoning that a setting which never stops
+		// applying is not a faster-startup setting but a permanent stall setting.
+		// The reasoning is sound and the conclusion was still wrong: false is
+		// what this app was measured smooth on, at several Mbps with a healthy
+		// buffer. Whatever latitude the framework takes with it, on this path it
+		// uses it well. A measurement outranks a theory about a measurement.
+		p.automaticallyWaitsToMinimizeStalling = false
 
 		let layer = AVPlayerLayer(player: p)
 		// Never crop. The graphics package on this channel lives at the edges of
@@ -366,7 +373,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// That property is a ceiling, AVFoundation publishes no floor to go with
 	/// it, and so a 1080p pick forbids nothing at all below 1080p: the adaptive
 	/// logic remains free to sit on the bottom rung and be entirely compliant.
-	/// Measured, exactly that happened - 1080p selected, 400 kbps playing.
 	///
 	/// So the pick is enforced one level down instead. A master playlist names a
 	/// separate media playlist for every rung; opening the chosen rung's own
@@ -374,9 +380,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// no lower rung in existence to fall to. Automatic reopens the master and
 	/// adapts across all of them as before.
 	///
+	/// Android has always worked this way - it constrains setMinVideoSize and
+	/// setMaxVideoSize to the same height, which leaves one eligible track - so
+	/// this also brings the two ends into agreement.
+	///
 	/// The cost is honest and intended: a pinned rung the network cannot sustain
 	/// will stall instead of quietly degrading, and changing rungs costs a short
-	/// reconnect because it is a different URL.
+	/// reconnect because it is a different URL. Automatic remains the setting
+	/// that adapts.
 	private func applyRequestedLevel() {
 		guard let it = item else { return }
 
