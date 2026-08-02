@@ -175,9 +175,9 @@
 	   layer the picture is drawn on. The bars keep their own translucent
 	   surfaces, so they still read against moving video.
 
-	   The rest of this sheet is the control bar built below. Its proportions are
-	   deliberately WebKit's: a pill inset from the three edges of the picture,
-	   heavy blur, circular glyph buttons at 30px, a 4px track, an 11px knob. */
+	   The rest of this sheet is the two controls built below: the pointer's
+	   control bar, whose proportions are deliberately WebKit's, and the
+	   television's centred badge. */
 	var css = document.createElement("style");
 	css.textContent =
 		"html.native,html.native body{background:transparent !important;}" +
@@ -216,7 +216,24 @@
 		".nbar.behind .nlive{color:#ff9a4d;}" +
 		/* A television has no pointer, the bar could never be revealed, and its
 		   buttons would only add stops to the remote's path across the page. */
-		"body.tv .nbar{display:none !important;}";
+		"body.tv .nbar{display:none !important;}" +
+		/* The badge is the television's replacement for all of that: one large
+		   circle in the middle of the picture, the shape every set-top player
+		   uses, readable from across a room. It exists only there - with a
+		   pointer the bar is better, and two indicators of the same fact is one
+		   too many. */
+		".nbadge{display:none;position:absolute;left:50%;top:50%;z-index:7;" +
+		"width:104px;height:104px;margin:-52px 0 0 -52px;border-radius:50%;" +
+		"align-items:center;justify-content:center;pointer-events:none;" +
+		"color:#fff;background:rgba(8,10,14,.58);" +
+		"-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);" +
+		"border:2px solid rgba(255,255,255,.86);" +
+		"box-shadow:0 10px 34px rgba(0,0,0,.5);" +
+		"opacity:0;transform:scale(.82);" +
+		"transition:opacity .2s ease,transform .2s cubic-bezier(.2,.8,.3,1);}" +
+		"body.tv .nbadge{display:flex;}" +
+		".nbadge.on{opacity:1;transform:scale(1);}" +
+		".nbadge svg{width:46px;height:46px;display:block;}";
 	document.head.appendChild(css);
 
 	function rate(bps){
@@ -264,9 +281,7 @@
 	   a platform control has to speak that platform's visual language. Glyphs,
 	   not words: a triangle and two bars for play and pause, a speaker, two pairs
 	   of corner arrows for fullscreen. A pill inset from the picture's edges with
-	   a track running through the middle of it. An earlier attempt here used
-	   three Chinese text buttons, which did the same work while looking nothing
-	   like the thing it stood in for.
+	   a track running through the middle of it.
 
 	   The track is the one place where the imitation stops. A live channel has no
 	   seekable timeline; WebKit drew a scrubber because a video element always
@@ -274,8 +289,7 @@
 	   that cannot scrub, this track is a live-position indicator: the knob rests
 	   at the right-hand end while the picture is at the live edge, backs off as
 	   the gap grows, turns amber once it is genuinely behind, and a click
-	   anywhere on it jumps forward to live. It never pretends to seek backwards,
-	   because there is nothing behind it to seek to.
+	   anywhere on it jumps forward to live.
 
 	   The buttons carry tabIndex -1 on purpose. The remote's path across this
 	   page is a deliberate three-row arrangement, and silently adding stops to it
@@ -283,6 +297,7 @@
 	   television cannot even show. */
 	var TARGET_LAT = 18;     /* the offset both shells aim to hold */
 	var BEHIND_LAT = 28;     /* the same threshold the rail uses */
+	var BADGE_MS = 1800;     /* how long the badge lingers while playing */
 
 	var bar = null;
 	var btnPlay = null;
@@ -290,6 +305,10 @@
 	var trackEl = null;
 	var fillEl = null;
 	var knobEl = null;
+
+	var badge = null;
+	var badgeTimer = null;
+	var badgeState = null;   /* the paused value the badge is currently drawing */
 
 	var ICON_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 4.8v14.4l11.2-7.2z"/></svg>';
 	var ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4.6h3.4v14.8H7zm6.6 0H17v14.8h-3.4z"/></svg>';
@@ -376,6 +395,83 @@
 		syncBar();
 	}
 
+	/* ---------- The television's badge ----------
+	   A remote cannot hover, so the bar above is hidden there and the picture
+	   was left with no visible playback state at all: the orange ring says where
+	   the focus is, and nothing said whether the channel was running. On a
+	   television that matters more than anywhere else, because a paused live
+	   picture and a frozen one look identical from a sofa.
+
+	   Hence the shape every set-top player already uses, and no reinvention of
+	   it: one large circle in the centre, a triangle or two bars inside.
+
+	   When it shows:
+
+	     - focus arrives on the picture, which is the moment asked for;
+	     - the play state changes, whoever changed it.
+
+	   When it goes: on blur, and 1.8s after appearing while the picture is
+	   playing. It does not linger while playing, because a badge parked over a
+	   news channel is worse than no badge. It does linger while paused, for the
+	   reason above - that is the one state the viewer cannot infer from the
+	   picture itself.
+
+	   pointer-events is none throughout. Enter on the focused picture already
+	   toggles playback through app.js, and the badge must not become a second
+	   target that a remote could land on. */
+	function buildBadge(){
+		if(badge || !api || !api.screen) return;
+		badge = document.createElement("div");
+		badge.className = "nbadge";
+		badge.setAttribute("aria-hidden", "true");
+		badge.innerHTML = ICON_PAUSE;
+		badgeState = false;
+		api.screen.appendChild(badge);
+
+		api.screen.addEventListener("focus", function(){ flashBadge(); });
+		api.screen.addEventListener("blur", function(){
+			if(badgeTimer){ clearTimeout(badgeTimer); badgeTimer = null; }
+			if(badge) badge.classList.remove("on");
+		});
+
+		/* The television starts with the picture focused, so the badge should
+		   already be on its way out rather than waiting for a first keypress. */
+		try{
+			if(document.activeElement === api.screen) flashBadge();
+		}catch(e){}
+	}
+
+	function flashBadge(){
+		if(!badge) return;
+		badge.innerHTML = paused ? ICON_PLAY : ICON_PAUSE;
+		badgeState = paused;
+		badge.classList.add("on");
+		if(badgeTimer){ clearTimeout(badgeTimer); badgeTimer = null; }
+		/* Paused stays put; playing fades. */
+		if(!paused){
+			badgeTimer = setTimeout(function(){
+				badgeTimer = null;
+				if(badge) badge.classList.remove("on");
+			}, BADGE_MS);
+		}
+	}
+
+	function syncBadge(){
+		if(!badge) return;
+		if(paused === badgeState){
+			/* No change to announce. A paused badge that is already up stays up. */
+			return;
+		}
+		/* Only speak up if the picture is where the viewer is looking. On a
+		   television that is essentially always true, and off it the badge is
+		   display:none anyway - but a state change nobody is watching should not
+		   leave a circle on the screen. */
+		var focused = false;
+		try{ focused = (document.activeElement === api.screen); }catch(e){}
+		if(!focused){ badgeState = paused; return; }
+		flashBadge();
+	}
+
 	function syncBar(){
 		if(btnPlay){
 			btnPlay.innerHTML = paused ? ICON_PLAY : ICON_PAUSE;
@@ -387,6 +483,7 @@
 			btnMute.title = muted ? "\u53d6\u6d88\u9759\u97f3" : "\u9759\u97f3";
 			btnMute.setAttribute("aria-label", btnMute.title);
 		}
+		syncBadge();
 		if(!fillEl || !knobEl) return;
 
 		/* At or inside the target offset the knob sits flush right, which is what
@@ -560,16 +657,19 @@
 			document.documentElement.classList.remove("native");
 			post({a:"stop"});
 			/* WebKit's own control bar comes back with the video element, so this
-			   one has to go or the picture would carry two. */
-			if(bar && bar.parentNode){
-				bar.parentNode.removeChild(bar);
-			}
+			   one has to go or the picture would carry two. The badge goes with it:
+			   from here on the play state belongs to the video element again. */
+			if(badgeTimer){ clearTimeout(badgeTimer); badgeTimer = null; }
+			if(bar && bar.parentNode) bar.parentNode.removeChild(bar);
+			if(badge && badge.parentNode) badge.parentNode.removeChild(badge);
 			bar = null;
 			btnPlay = null;
 			btnMute = null;
 			trackEl = null;
 			fillEl = null;
 			knobEl = null;
+			badge = null;
+			badgeState = null;
 
 			var only = nativeOnly(startedUrl);
 			if(only){
@@ -615,6 +715,7 @@
 			api.qMode.textContent = "\u81ea\u52a8";
 			api.qRes.textContent = "\u2014";
 			buildBar();
+			buildBadge();
 			post({a:"play", url:url, muted: !api.wantSound()});
 			sendRect();
 			return true;
