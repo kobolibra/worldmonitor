@@ -66,12 +66,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	private var failures = 0
 	private var sentTracks = false
 
-	/// Mirrors the hls.js settings in app.js, so both paths behave alike.
-	private let targetOffset = 18.0
-	/// How much video to keep ahead of the playhead. hls.js on this page is
-	/// allowed forty seconds and uses it; thirty here is the difference between
-	/// riding out a hiccup on a long path and stopping for it.
-	private let forwardBuffer = 30.0
+	// MARK: Buffering
+	//
+	// These two numbers are one number.
+	//
+	// On a live stream the video ahead of the playhead is the video between the
+	// playhead and the live edge, because nothing past the edge has been made
+	// yet. So the cushion that absorbs a hiccup is not something the player can
+	// be told to accumulate - it is bought, once, by standing further back. A
+	// player sitting two seconds behind live has two seconds of cushion and no
+	// setting can give it more.
+	//
+	// Build 11 asked for thirty seconds of buffer while also releasing the
+	// player to ride the edge, and got 7.9s buffered at 2.1s behind live, on the
+	// bottom rung of the ladder at 400 kbps - riding the edge leaves no room to
+	// prefetch, so the throughput estimate collapses and the ladder collapses
+	// with it.
+
+	/// How far behind the live edge to sit. This is the real cushion.
+	private let targetOffset = 24.0
+	/// What to ask the item to hold ahead of the playhead. Kept equal to the
+	/// offset deliberately: a larger figure is a request for video that does not
+	/// exist, and reads in the code as though it achieved something.
+	private let forwardBuffer = 24.0
 	/// A feed that has produced nothing at all by now is not going to. Generous
 	/// on purpose: calling failure on a slow path that would have opened costs a
 	/// handover to the slower engine and then a second cold start.
@@ -230,27 +247,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		let asset = AVURLAsset(url: u)
 		let playerItem = AVPlayerItem(asset: asset)
 
-		// Where to sit behind the live edge, rather than letting the framework
-		// choose, so the figure in the rail means the same thing here as it does
-		// under hls.js.
+		// Take up position behind the live edge, and hold it.
+		//
+		// Holding it is not free: the only ways to recover lost time are to play
+		// slightly faster or to skip, and both spend buffer. That cost is real,
+		// and it is the reason build 11 switched this off. Switching it off was a
+		// mistake, because the alternative is not "keep the buffer" - it is having
+		// no buffer at all. Without this the player drifts up to the live edge and
+		// stays there, where there is nothing ahead of it to hold.
+		playerItem.automaticallyPreservesTimeOffsetFromLive = true
 		playerItem.configuredTimeOffsetFromLive =
 			CMTime(seconds: targetOffset, preferredTimescale: 600)
 
-		// Aim for that offset, but do not chase it back after losing it.
-		//
-		// Preserving the offset sounds like discipline and is in fact the opposite:
-		// the only ways to recover lost time are to play faster or to skip ahead,
-		// and both spend buffer that a stall has just proved to be empty. The
-		// result on a long path is a loop - starve, stall, rush, starve - which is
-		// exactly the stutter this app had. Apple documents the flag as increasing
-		// the likelihood of stalling. Drifting a few seconds further behind costs
-		// nothing on a news channel, and the LIVE control is already there for
-		// deliberately returning to the edge.
-		playerItem.automaticallyPreservesTimeOffsetFromLive = false
-
-		// Hold a real cushion. Without this the item keeps only what the framework
-		// considers the minimum, which on a stable connection is invisible and on
-		// a congested one is the whole problem.
+		// Fill that distance rather than leaving it as slack the framework may or
+		// may not use.
 		playerItem.preferredForwardBufferDuration = forwardBuffer
 
 		let p = AVPlayer(playerItem: playerItem)
