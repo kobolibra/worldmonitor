@@ -8,6 +8,10 @@ import WebKit
 let homeURL = URL(string: "https://kobolibra.github.io/worldmonitor/")!
 let homeHost = "kobolibra.github.io"
 
+/// Remembered across launches: whether the viewer has handed the picture back
+/// to the page's own hls.js instead of AVFoundation.
+let engineDefaultsKey = "BBGUseWebDecoder"
+
 let backdrop = NSColor(srgbRed: 0x06 / 255.0, green: 0x07 / 255.0, blue: 0x0A / 255.0, alpha: 1)
 
 /// Escape a string for embedding inside a JavaScript double-quoted literal.
@@ -38,6 +42,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	// Held for the lifetime of the app. Releasing this token re-enables idle
 	// display sleep, so it must not be a local.
 	private var awakeToken: NSObjectProtocol?
+
+	// MARK: The engine
+	//
+	// Two decoders can draw this page's picture: AVFoundation, in a layer under
+	// the web view, and hls.js, inside it. On paper the first one wins on every
+	// count - hardware decoding, no remuxing in JavaScript, no CORS check, HEVC
+	// support - and paper has now been wrong about this app three times running.
+	//
+	// So the app stops arguing and carries a switch. Two seconds of watching
+	// settles what an afternoon of reasoning did not, and the answer no longer
+	// costs a build each time it is asked.
+	private var useWebDecoder = UserDefaults.standard.bool(forKey: engineDefaultsKey)
+	private var engineItem: NSMenuItem?
 
 	// MARK: Native playback state
 	//
@@ -255,6 +272,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// A new feed. Everything about the previous one - its ladder, its pinned
 	/// rung - stops applying here.
 	private func startNative(url: String, startMuted: Bool) {
+		// The viewer has taken the picture back. Declining here is all it takes:
+		// the page treats a fallback as final and keeps playing on its own.
+		if useWebDecoder {
+			send(["t": "fallback"])
+			return
+		}
 		guard let u = URL(string: url) else {
 			send(["t": "fallback"])
 			return
@@ -761,6 +784,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			reason: "Playing a live video stream")
 	}
 
+	// MARK: - Engine switch
+
+	@objc private func toggleEngine() {
+		useWebDecoder = !useWebDecoder
+		UserDefaults.standard.set(useWebDecoder, forKey: engineDefaultsKey)
+		updateEngineItem()
+
+		if useWebDecoder {
+			// Taking the picture away from AVFoundation and telling the page to
+			// pick it up is all that is needed - no reload, no reconnect beyond
+			// the one hls.js makes for itself.
+			releasePlayer()
+			send(["t": "fallback"])
+			return
+		}
+
+		// Going back the other way is not symmetrical: the page treats a
+		// fallback as final for the rest of its life, by design, so that a feed
+		// the native decoder cannot play does not flap between the two. Reloading
+		// is the honest way to let it forget.
+		releasePlayer()
+		web.reload()
+	}
+
+	private func updateEngineItem() {
+		engineItem?.title =
+			useWebDecoder ? "Use Native Decoder" : "Use Web Decoder (hls.js)"
+	}
+
 	// MARK: - Menu bar
 
 	// Built by hand because the bundle carries no nib. Without a main menu the
@@ -806,6 +858,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		hardReload.keyEquivalentModifierMask = [.command, .shift]
 		hardReload.target = self
 		viewMenu.addItem(hardReload)
+		viewMenu.addItem(.separator())
+		let engine = NSMenuItem(
+			title: "Use Web Decoder (hls.js)",
+			action: #selector(toggleEngine),
+			keyEquivalent: "e")
+		engine.target = self
+		viewMenu.addItem(engine)
+		engineItem = engine
+		updateEngineItem()
 		viewMenu.addItem(.separator())
 		let full = NSMenuItem(
 			title: "Enter Full Screen",
