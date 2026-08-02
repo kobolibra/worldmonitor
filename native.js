@@ -61,10 +61,11 @@
 	   says what the native player then did. Between them, "never started",
 	   "running" and "gave up and why" stop being indistinguishable.
 
-	   They go in the source popover footer, because that is where somebody
-	   wondering what the app is doing with the picture will already be. app.js
-	   only ever rewrites the list inside that popover, never the footer, so these
-	   survive the menu being rebuilt. */
+	   They went in the source popover footer. That footer has since been removed
+	   from the markup - explanatory prose inside a menu goes stale and then lies -
+	   so these are no-ops today. The calls are left in place because they cost
+	   nothing and because re-adding a temporary footer is how the last three
+	   playback diagnoses were actually settled. */
 	function footLine(cls, txt){
 		try{
 			var foot = document.querySelector("#sMenu .q-foot");
@@ -135,6 +136,7 @@
 	var lockedH = null;      /* the height the viewer asked for, null for auto */
 	var muted = false;
 	var paused = false;
+	var latency = NaN;       /* last reported distance from the live edge */
 	var lastRect = "";
 	var startedUrl = "";     /* what the native player was last asked to open */
 
@@ -173,25 +175,45 @@
 	   layer the picture is drawn on. The bars keep their own translucent
 	   surfaces, so they still read against moving video.
 
-	   The rest of this sheet is the hover control bar built below. */
+	   The rest of this sheet is the control bar built below. Its proportions are
+	   deliberately WebKit's: a pill inset from the three edges of the picture,
+	   heavy blur, circular glyph buttons at 30px, a 4px track, an 11px knob. */
 	var css = document.createElement("style");
 	css.textContent =
 		"html.native,html.native body{background:transparent !important;}" +
 		"html.native .ambient{display:none !important;}" +
-		".nbar{position:absolute;left:50%;bottom:16px;z-index:6;display:flex;gap:6px;" +
-		"padding:6px;border-radius:14px;border:1px solid rgba(255,255,255,.14);" +
-		"background:rgba(8,10,14,.74);-webkit-backdrop-filter:blur(14px);" +
-		"backdrop-filter:blur(14px);box-shadow:0 8px 26px rgba(0,0,0,.42);" +
-		"opacity:0;pointer-events:none;" +
-		"transform:translateX(-50%) translateY(8px);" +
-		"transition:opacity .16s ease,transform .16s ease;}" +
+		".nbar{position:absolute;left:14px;right:14px;bottom:14px;z-index:6;" +
+		"height:38px;display:flex;align-items:center;gap:6px;padding:0 7px;" +
+		"border-radius:19px;border:1px solid rgba(255,255,255,.10);" +
+		"background:rgba(28,28,30,.56);-webkit-backdrop-filter:blur(26px) saturate(180%);" +
+		"backdrop-filter:blur(26px) saturate(180%);box-shadow:0 4px 18px rgba(0,0,0,.38);" +
+		"opacity:0;pointer-events:none;transform:translateY(6px);" +
+		"transition:opacity .18s ease,transform .18s ease;}" +
 		".screen:hover .nbar,.nbar:focus-within{opacity:1;pointer-events:auto;" +
-		"transform:translateX(-50%) translateY(0);}" +
-		".nbar button{appearance:none;-webkit-appearance:none;border:0;" +
-		"background:transparent;color:#f4f6f8;font:inherit;font-size:12px;" +
-		"letter-spacing:.02em;padding:7px 13px;border-radius:9px;cursor:pointer;}" +
-		".nbar button:hover{background:rgba(255,255,255,.13);}" +
-		".nbar button:active{background:rgba(255,255,255,.2);}" +
+		"transform:translateY(0);}" +
+		".nbar button{appearance:none;-webkit-appearance:none;border:0;padding:0;" +
+		"background:transparent;color:#fff;width:30px;height:30px;flex:0 0 auto;" +
+		"border-radius:50%;display:flex;align-items:center;justify-content:center;" +
+		"cursor:pointer;transition:background .12s ease;}" +
+		".nbar button:hover{background:rgba(255,255,255,.15);}" +
+		".nbar button:active{background:rgba(255,255,255,.24);}" +
+		".nbar svg{width:17px;height:17px;display:block;}" +
+		".ntrack{flex:1 1 auto;min-width:40px;height:20px;display:flex;" +
+		"align-items:center;cursor:pointer;padding:0 6px;}" +
+		".nrail{position:relative;width:100%;height:4px;border-radius:2px;" +
+		"background:rgba(255,255,255,.28);}" +
+		".nfill{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:2px;" +
+		"background:#fff;transition:width .4s linear;}" +
+		".nknob{position:absolute;top:50%;left:100%;width:11px;height:11px;" +
+		"margin:-5.5px 0 0 -5.5px;border-radius:50%;background:#fff;" +
+		"box-shadow:0 1px 3px rgba(0,0,0,.55);transition:left .4s linear;}" +
+		".nlive{flex:0 0 auto;display:flex;align-items:center;gap:5px;padding:0 6px 0 2px;" +
+		"font:inherit;font-size:10px;letter-spacing:.09em;color:rgba(255,255,255,.84);}" +
+		".nlive i{width:6px;height:6px;border-radius:50%;font-style:normal;" +
+		"background:#27d17c;}" +
+		".nbar.behind .nfill,.nbar.behind .nknob{background:#ff6a00;}" +
+		".nbar.behind .nlive i{background:#ff6a00;}" +
+		".nbar.behind .nlive{color:#ff9a4d;}" +
 		/* A television has no pointer, the bar could never be revealed, and its
 		   buttons would only add stops to the remote's path across the page. */
 		"body.tv .nbar{display:none !important;}";
@@ -236,31 +258,59 @@
 	   app.js does not run a second telemetry loop and a second unmute path
 	   against a decoder that is no longer playing anything - and WebKit's bar
 	   goes with it. The keyboard survived, because those shortcuts are bound to
-	   the document. The mouse did not, so the picture became something that can
-	   only be operated by somebody who knows the shortcuts.
+	   the document. The mouse did not.
 
-	   Hence two additions, both of them only in native mode:
+	   So this bar is a replacement for a platform control, and a replacement for
+	   a platform control has to speak that platform's visual language. Glyphs,
+	   not words: a triangle and two bars for play and pause, a speaker, two pairs
+	   of corner arrows for fullscreen. A pill inset from the picture's edges with
+	   a track running through the middle of it. An earlier attempt here used
+	   three Chinese text buttons, which did the same work while looking nothing
+	   like the thing it stood in for.
 
-	     - a click anywhere on the picture, handled below;
-	     - this bar, which appears on hover exactly where WebKit's used to.
-
-	   There is no scrubber on it. WebKit drew one because a video element always
-	   has a timeline; a live channel has no position to seek to and nowhere to
-	   seek from, which is what the LIVE button in the rail is for.
+	   The track is the one place where the imitation stops. A live channel has no
+	   seekable timeline; WebKit drew a scrubber because a video element always
+	   has one, not because there was anywhere to go. Rather than ship a scrubber
+	   that cannot scrub, this track is a live-position indicator: the knob rests
+	   at the right-hand end while the picture is at the live edge, backs off as
+	   the gap grows, turns amber once it is genuinely behind, and a click
+	   anywhere on it jumps forward to live. It never pretends to seek backwards,
+	   because there is nothing behind it to seek to.
 
 	   The buttons carry tabIndex -1 on purpose. The remote's path across this
-	   page is a deliberate three-row arrangement, and silently adding two stops
-	   to it would be a regression for the television in exchange for a bar the
+	   page is a deliberate three-row arrangement, and silently adding stops to it
+	   would be a regression for the television in exchange for a bar the
 	   television cannot even show. */
+	var TARGET_LAT = 18;     /* the offset both shells aim to hold */
+	var BEHIND_LAT = 28;     /* the same threshold the rail uses */
+
 	var bar = null;
 	var btnPlay = null;
 	var btnMute = null;
+	var trackEl = null;
+	var fillEl = null;
+	var knobEl = null;
 
-	function barButton(label, onClick){
+	var ICON_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 4.8v14.4l11.2-7.2z"/></svg>';
+	var ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4.6h3.4v14.8H7zm6.6 0H17v14.8h-3.4z"/></svg>';
+	var ICON_SOUND = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+		'<path fill="currentColor" d="M4 9.2h3.4L12 5.2v13.6L7.4 14.8H4z"/>' +
+		'<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.4 9.3a3.8 3.8 0 010 5.4"/>' +
+		'<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M18.1 6.8a7.4 7.4 0 010 10.4"/></svg>';
+	var ICON_MUTED = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+		'<path fill="currentColor" d="M4 9.2h3.4L12 5.2v13.6L7.4 14.8H4z"/>' +
+		'<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.6 9.6l4.8 4.8m0-4.8l-4.8 4.8"/></svg>';
+	var ICON_FULL = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+		'<path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" ' +
+		'stroke-linejoin="round" d="M4.5 9.2V4.5h4.7M19.5 9.2V4.5h-4.7M4.5 14.8v4.7h4.7M19.5 14.8v4.7h-4.7"/></svg>';
+
+	function barButton(icon, label, onClick){
 		var b = document.createElement("button");
 		b.type = "button";
 		b.tabIndex = -1;
-		b.textContent = label;
+		b.innerHTML = icon;
+		b.title = label;
+		b.setAttribute("aria-label", label);
 		b.addEventListener("click", function(e){
 			e.preventDefault();
 			e.stopPropagation();
@@ -274,18 +324,52 @@
 		bar = document.createElement("div");
 		bar.className = "nbar";
 
-		btnPlay = barButton("\u6682\u505c", function(){ post({a:"toggle"}); });
-		btnMute = barButton("\u9759\u97f3", function(){ post({a:"mute", on: !muted}); });
+		btnPlay = barButton(ICON_PAUSE, "\u64ad\u653e / \u6682\u505c",
+			function(){ post({a:"toggle"}); });
+
+		/* The track. Clicking it means "catch up", which is the only movement a
+		   live edge admits, and it is the same call the LIVE button in the rail
+		   makes. Deliberately not a range input: a range implies a value you set,
+		   and there is exactly one position available here. */
+		trackEl = document.createElement("div");
+		trackEl.className = "ntrack";
+		trackEl.title = "\u76f4\u64ad\u4e0d\u53ef\u62d6\u52a8\uff1b\u5706\u70b9\u8d34\u53f3\u8fb9\u5373\u8ddf\u4e0a\u76f4\u64ad\uff0c\u70b9\u4e00\u4e0b\u56de\u5230\u76f4\u64ad";
+		var rail = document.createElement("div");
+		rail.className = "nrail";
+		fillEl = document.createElement("div");
+		fillEl.className = "nfill";
+		knobEl = document.createElement("div");
+		knobEl.className = "nknob";
+		rail.appendChild(fillEl);
+		rail.appendChild(knobEl);
+		trackEl.appendChild(rail);
+		trackEl.addEventListener("click", function(e){
+			e.preventDefault();
+			e.stopPropagation();
+			post({a:"live"});
+		});
+
+		/* Where WebKit prints a running time there is no time to print, so the
+		   same slot carries the state that does exist. */
+		var tag = document.createElement("span");
+		tag.className = "nlive";
+		tag.innerHTML = '<i></i>LIVE';
+
+		btnMute = barButton(ICON_SOUND, "\u9759\u97f3 / \u53d6\u6d88\u9759\u97f3",
+			function(){ post({a:"mute", on: !muted}); });
+
 		/* Deliberately the page's own fullscreen control rather than a second
 		   implementation of it. That button already knows to ask the shell to
 		   take the window fullscreen rather than expanding an element inside a
 		   window that stays put, which was a long enough bug to earn the rule. */
-		var btnFull = barButton("\u5168\u5c4f", function(){
+		var btnFull = barButton(ICON_FULL, "\u5168\u5c4f", function(){
 			var f = document.getElementById("fsBtn");
 			if(f) f.click();
 		});
 
 		bar.appendChild(btnPlay);
+		bar.appendChild(trackEl);
+		bar.appendChild(tag);
 		bar.appendChild(btnMute);
 		bar.appendChild(btnFull);
 		api.screen.appendChild(bar);
@@ -293,10 +377,32 @@
 	}
 
 	function syncBar(){
-		if(btnPlay) btnPlay.textContent = paused ? "\u64ad\u653e" : "\u6682\u505c";
+		if(btnPlay){
+			btnPlay.innerHTML = paused ? ICON_PLAY : ICON_PAUSE;
+			btnPlay.title = paused ? "\u64ad\u653e" : "\u6682\u505c";
+			btnPlay.setAttribute("aria-label", btnPlay.title);
+		}
 		if(btnMute){
-			btnMute.textContent = muted
-				? "\u53d6\u6d88\u9759\u97f3" : "\u9759\u97f3";
+			btnMute.innerHTML = muted ? ICON_MUTED : ICON_SOUND;
+			btnMute.title = muted ? "\u53d6\u6d88\u9759\u97f3" : "\u9759\u97f3";
+			btnMute.setAttribute("aria-label", btnMute.title);
+		}
+		if(!fillEl || !knobEl) return;
+
+		/* At or inside the target offset the knob sits flush right, which is what
+		   "live" looks like. Past it the knob retreats, but only across the last
+		   quarter of the track: the gap is seconds behind an edge, not a position
+		   in a recording, and letting it slide to the middle would suggest a
+		   timeline that does not exist. */
+		var frac = 1;
+		if(isFinite(latency) && latency > TARGET_LAT){
+			frac = 1 - Math.min((latency - TARGET_LAT) / 45, 0.26);
+		}
+		var pct = (Math.round(frac * 1000) / 10) + "%";
+		fillEl.style.width = pct;
+		knobEl.style.left = pct;
+		if(bar){
+			bar.classList.toggle("behind", isFinite(latency) && latency > BEHIND_LAT);
 		}
 	}
 
@@ -311,10 +417,10 @@
 		if(!live || !api || !api.screen) return;
 		var t = e.target;
 		if(!t || !api.screen.contains(t)) return;
-		/* The bar's own buttons, the retry button, and anything else genuinely
+		/* The bar itself, the retry button, and anything else genuinely
 		   interactive drawn over the picture, keep their own click. */
 		try{
-			if(t.closest && t.closest("button,a,input,select,textarea,[role='button'],#state")) return;
+			if(t.closest && t.closest("button,a,input,select,textarea,[role='button'],#state,.nbar")) return;
 		}catch(err){}
 		e.preventDefault();
 		e.stopPropagation();
@@ -392,7 +498,6 @@
 		muted = !!d.muted;
 		paused = !!d.paused;
 		api.screen.classList.toggle("mutedState", muted);
-		syncBar();
 
 		api.statRate.textContent = d.bps
 			? ("\u7801\u7387 " + (d.bps >= 1000000
@@ -406,13 +511,16 @@
 		api.statBuf.classList.toggle("thin", isFinite(buf) && buf < 4);
 
 		var lat = (typeof d.lat === "number" && isFinite(d.lat)) ? d.lat : NaN;
+		latency = lat;
 		api.statLat.textContent = isFinite(lat)
 			? ("\u5ef6\u8fdf " + lat.toFixed(1) + "s") : "\u5ef6\u8fdf \u2014";
 		api.statLat.title = "\u5f53\u524d\u753b\u9762\u8ddd\u79bb\u76f4\u64ad\u8fb9\u7f18\u7684\u771f\u5b9e\u65f6\u95f4\u5dee\n\u539f\u751f\u89e3\u7801";
 
-		var behind = isFinite(lat) && lat > 28;
+		var behind = isFinite(lat) && lat > BEHIND_LAT;
 		api.liveBtn.classList.toggle("behind", behind);
 		api.liveTxt.textContent = behind ? "\u56de\u5230\u76f4\u64ad" : "LIVE";
+
+		syncBar();
 
 		api.qRes.textContent = d.h ? ((d.w || "?") + "\u00d7" + d.h) : "\u2014";
 		var row = api.qList.querySelector('.q-item[aria-selected="true"]');
@@ -455,10 +563,13 @@
 			   one has to go or the picture would carry two. */
 			if(bar && bar.parentNode){
 				bar.parentNode.removeChild(bar);
-				bar = null;
-				btnPlay = null;
-				btnMute = null;
 			}
+			bar = null;
+			btnPlay = null;
+			btnMute = null;
+			trackEl = null;
+			fillEl = null;
+			knobEl = null;
 
 			var only = nativeOnly(startedUrl);
 			if(only){
@@ -499,6 +610,7 @@
 			lockedH = null;
 			lastRect = "";
 			paused = false;
+			latency = NaN;
 			api.qBtn.disabled = true;
 			api.qMode.textContent = "\u81ea\u52a8";
 			api.qRes.textContent = "\u2014";
