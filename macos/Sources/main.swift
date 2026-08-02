@@ -66,6 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	private var failures = 0
 	private var sentTracks = false
 
+	// MARK: The ladder
+	//
+	// The master playlist for the current feed, plus the individual media
+	// playlist each rung is served from. Keeping the per-rung URLs is what makes
+	// a picked quality mean anything here - see applyRequestedLevel.
+	private var masterURL: URL?
+	private var variantURLs: [Int: URL] = [:]
+	/// What the page asked for: a height, or 0 for automatic.
+	private var requestedHeight = 0
+	/// Which rung's own playlist is currently open, or 0 for the master.
+	private var pinnedHeight = 0
+
 	// MARK: Buffering
 	//
 	// These two numbers are one number.
@@ -232,16 +244,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
 	// MARK: - Native playback
 
+	/// A new feed. Everything about the previous one - its ladder, its pinned
+	/// rung - stops applying here.
 	private func startNative(url: String, startMuted: Bool) {
 		guard let u = URL(string: url) else {
 			send(["t": "fallback"])
 			return
 		}
+		masterURL = u
+		variantURLs = [:]
+		pinnedHeight = 0
+		sentTracks = false
+		// requestedHeight deliberately survives: a quality the viewer chose is a
+		// standing preference, not something to forget because they changed feed.
+		open(u, startMuted: startMuted)
+		fetchVariants(u)
+	}
+
+	/// Point the player at one playlist - the master, or a single rung's own.
+	private func open(_ u: URL, startMuted: Bool) {
 		releasePlayer()
 
 		muted = startMuted
 		everPlayed = false
-		sentTracks = false
 		startedAt = Date()
 
 		let asset = AVURLAsset(url: u)
@@ -262,6 +287,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		// Fill that distance rather than leaving it as slack the framework may or
 		// may not use.
 		playerItem.preferredForwardBufferDuration = forwardBuffer
+
+		// If a height was picked but this playlist is the master - because the
+		// ladder has not been read yet - a ceiling is at least better than
+		// nothing until applyRequestedLevel can do the real thing.
+		if requestedHeight > 0, pinnedHeight == 0 {
+			playerItem.preferredMaximumResolution =
+				CGSize(width: 0, height: CGFloat(requestedHeight))
+		}
 
 		let p = AVPlayer(playerItem: playerItem)
 		p.isMuted = muted
@@ -296,7 +329,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		send(["t": "loading", "msg": "\u{6b63}\u{5728}\u{8fde}\u{63a5} Bloomberg \u{76f4}\u{64ad}\u{2026}"])
 		p.play()
 		startStats()
-		fetchVariants(u)
 	}
 
 	private func releasePlayer() {
@@ -320,20 +352,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		player?.play()
 	}
 
-	/// A picked height, or -1 for auto.
-	///
-	/// AVFoundation offers a ceiling and no floor: there is no public way to pin
-	/// the ladder to exactly one rung. A ceiling is still the important half -
-	/// it is what stops a 1080p pick quietly becoming 1080p-or-anything - and
-	/// under a ceiling the framework will not climb above what was asked for.
+	// MARK: - Quality
+
+	/// A picked height, or -1 for automatic.
 	private func applyLevel(_ h: Int) {
+		requestedHeight = h > 0 ? h : 0
+		applyRequestedLevel()
+	}
+
+	/// Honour the current pick.
+	///
+	/// The obvious route is preferredMaximumResolution, and it is not enough.
+	/// That property is a ceiling, AVFoundation publishes no floor to go with
+	/// it, and so a 1080p pick forbids nothing at all below 1080p: the adaptive
+	/// logic remains free to sit on the bottom rung and be entirely compliant.
+	/// Measured, exactly that happened - 1080p selected, 400 kbps playing.
+	///
+	/// So the pick is enforced one level down instead. A master playlist names a
+	/// separate media playlist for every rung; opening the chosen rung's own
+	/// playlist gives the player a ladder with a single step on it, and there is
+	/// no lower rung in existence to fall to. Automatic reopens the master and
+	/// adapts across all of them as before.
+	///
+	/// The cost is honest and intended: a pinned rung the network cannot sustain
+	/// will stall instead of quietly degrading, and changing rungs costs a short
+	/// reconnect because it is a different URL.
+	private func applyRequestedLevel() {
 		guard let it = item else { return }
-		if h > 0 {
-			it.preferredMaximumResolution = CGSize(width: 0, height: CGFloat(h))
-		} else {
-			it.preferredMaximumResolution = .zero
-			it.preferredPeakBitRate = 0
+
+		if requestedHeight > 0 {
+			if let variant = variantURLs[requestedHeight] {
+				if pinnedHeight == requestedHeight { return }
+				pinnedHeight = requestedHeight
+				open(variant, startMuted: muted)
+			} else {
+				// The ladder has not arrived, or this feed has no such rung.
+				// A ceiling is the only instrument available.
+				it.preferredMaximumResolution =
+					CGSize(width: 0, height: CGFloat(requestedHeight))
+			}
+			return
 		}
+
+		if pinnedHeight != 0, let master = masterURL {
+			pinnedHeight = 0
+			open(master, startMuted: muted)
+			return
+		}
+		it.preferredMaximumResolution = .zero
+		it.preferredPeakBitRate = 0
 	}
 
 	// MARK: - The variant ladder
@@ -341,13 +408,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	// Read out of the master playlist directly, with URLSession and a few lines
 	// of parsing.
 	//
-	// AVFoundation does expose this as AVAsset.variants, but that property only
-	// exists on macOS 13 while this app deploys back to 11.0, and reaching it
-	// means an async property load - structured concurrency inside a plain
-	// two-target swiftc invocation with no Xcode project behind it. A master
-	// playlist is a text file with one line per rung. Parsing it needs no
-	// availability check, no concurrency, and gives the page exactly the same
-	// heights and bitrates.
+	// AVFoundation does expose the rungs as AVAsset.variants, but that property
+	// only exists on macOS 13 while this app deploys back to 11.0, it means an
+	// async property load - structured concurrency inside a plain two-target
+	// swiftc invocation with no Xcode project behind it - and it does not hand
+	// back the per-rung URL that the pinning above depends on. A master playlist
+	// is a text file with one line of attributes and one line of address per
+	// rung. Parsing it needs no availability check and gives us both.
 
 	private func fetchVariants(_ url: URL) {
 		var request = URLRequest(url: url)
@@ -356,77 +423,108 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			guard let data = data,
 				let text = String(data: data, encoding: .utf8)
 			else { return }
-			let list = AppDelegate.parseMaster(text)
+			let parsed = AppDelegate.parseMaster(text)
+			if parsed.isEmpty { return }
+
+			var list: [[String: Any]] = []
+			var map: [Int: URL] = [:]
+			var seen = Set<Int>()
+			for v in parsed {
+				if v.h <= 0 || seen.contains(v.h) { continue }
+				seen.insert(v.h)
+				list.append(["h": v.h, "w": v.w, "bps": v.bps])
+				if let resolved = URL(string: v.uri, relativeTo: url)?.absoluteURL {
+					map[v.h] = resolved
+				}
+			}
 			if list.isEmpty { return }
+
 			DispatchQueue.main.async {
 				guard let self = self, self.player != nil, !self.sentTracks else { return }
 				self.sentTracks = true
+				self.variantURLs = map
 				self.send(["t": "tracks", "list": list])
+				// A pick restored from storage arrives before the ladder does, and
+				// until now could only be applied as a ceiling. It can be done
+				// properly from here.
+				self.applyRequestedLevel()
 			}
 		}
 		task.resume()
 	}
 
-	/// Pull RESOLUTION and BANDWIDTH out of every EXT-X-STREAM-INF line.
+	/// Every rung: its resolution and bandwidth, and the address on the line
+	/// after them.
 	///
-	/// A media playlist carries no such lines, in which case this returns nothing
-	/// and the page simply leaves the quality control on automatic.
-	private static func parseMaster(_ text: String) -> [[String: Any]] {
-		var seen = Set<Int>()
-		var list: [[String: Any]] = []
+	/// A media playlist carries no EXT-X-STREAM-INF lines at all, in which case
+	/// this returns nothing - which is correct, and is also what happens when a
+	/// pinned rung's own playlist is fetched.
+	private static func parseMaster(_ text: String) -> [(h: Int, w: Int, bps: Int, uri: String)] {
+		var out: [(h: Int, w: Int, bps: Int, uri: String)] = []
+		var pending: (h: Int, w: Int, bps: Int)?
 
 		for rawLine in text.components(separatedBy: .newlines) {
 			let line = rawLine.trimmingCharacters(in: .whitespaces)
-			guard line.hasPrefix("#EXT-X-STREAM-INF:") else { continue }
+			if line.isEmpty { continue }
 
-			let attrs = String(line.dropFirst("#EXT-X-STREAM-INF:".count))
-			var width = 0
-			var height = 0
-			var bps = 0
+			if line.hasPrefix("#EXT-X-STREAM-INF:") {
+				let attrs = String(line.dropFirst("#EXT-X-STREAM-INF:".count))
+				var width = 0
+				var height = 0
+				var bps = 0
 
-			// Splitting on commas is wrong in general - CODECS="a,b" contains one -
-			// but every attribute this needs is unquoted, so a quoted-string flag
-			// is enough to keep the pieces aligned.
-			var pieces: [String] = []
-			var current = ""
-			var inQuotes = false
-			for ch in attrs {
-				if ch == "\"" {
-					inQuotes = !inQuotes
-					continue
-				}
-				if ch == ",", !inQuotes {
-					pieces.append(current)
-					current = ""
-					continue
-				}
-				current.append(ch)
-			}
-			pieces.append(current)
-
-			for piece in pieces {
-				guard let eq = piece.firstIndex(of: "=") else { continue }
-				let key = piece[piece.startIndex..<eq]
-					.trimmingCharacters(in: .whitespaces).uppercased()
-				let value = piece[piece.index(after: eq)...]
-					.trimmingCharacters(in: .whitespaces)
-
-				if key == "RESOLUTION" {
-					let parts = value.lowercased().components(separatedBy: "x")
-					if parts.count == 2 {
-						width = Int(parts[0]) ?? 0
-						height = Int(parts[1]) ?? 0
+				// Splitting on commas is wrong in general - CODECS="a,b" contains
+				// one - but every attribute needed here is unquoted, so a
+				// quoted-string flag is enough to keep the pieces aligned.
+				var pieces: [String] = []
+				var current = ""
+				var inQuotes = false
+				for ch in attrs {
+					if ch == "\"" {
+						inQuotes = !inQuotes
+						continue
 					}
-				} else if key == "BANDWIDTH" || (key == "AVERAGE-BANDWIDTH" && bps == 0) {
-					bps = Int(value) ?? bps
+					if ch == ",", !inQuotes {
+						pieces.append(current)
+						current = ""
+						continue
+					}
+					current.append(ch)
 				}
+				pieces.append(current)
+
+				for piece in pieces {
+					guard let eq = piece.firstIndex(of: "=") else { continue }
+					let key = piece[piece.startIndex..<eq]
+						.trimmingCharacters(in: .whitespaces).uppercased()
+					let value = piece[piece.index(after: eq)...]
+						.trimmingCharacters(in: .whitespaces)
+
+					if key == "RESOLUTION" {
+						let parts = value.lowercased().components(separatedBy: "x")
+						if parts.count == 2 {
+							width = Int(parts[0]) ?? 0
+							height = Int(parts[1]) ?? 0
+						}
+					} else if key == "BANDWIDTH" || (key == "AVERAGE-BANDWIDTH" && bps == 0) {
+						bps = Int(value) ?? bps
+					}
+				}
+
+				pending = (h: height, w: width, bps: bps)
+				continue
 			}
 
-			if height <= 0 || seen.contains(height) { continue }
-			seen.insert(height)
-			list.append(["h": height, "w": width, "bps": bps])
+			// Any other tag line. Comments and tags cannot be a rung's address.
+			if line.hasPrefix("#") { continue }
+
+			// A plain line directly after the attributes is that rung's playlist.
+			if let p = pending {
+				out.append((h: p.h, w: p.w, bps: p.bps, uri: line))
+				pending = nil
+			}
 		}
-		return list
+		return out
 	}
 
 	// MARK: - Telemetry
