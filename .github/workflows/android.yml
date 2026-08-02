@@ -48,15 +48,26 @@ jobs:
       # finds none, and committed back to this branch; every later build reuses
       # it untouched.
       #
-      # It is stored in the open, which is a deliberate trade. The alternative -
-      # a secret - would mean a human generating a keystore, base64ing it and
-      # pasting four values into repository settings, and would have to be
-      # repeated on every fork or restore. This app ships no credentials, talks
-      # to one public page, and is never listed in a store, so the only thing
-      # the key protects is the ability to publish an upgrade to a package that
-      # is only ever installed by hand. Convenience wins. If this app ever
-      # gains an account or goes to a store, move the keystore into
-      # BBG_KEYSTORE_BASE64 and delete the committed copy.
+      # The subject names the app and nothing else. apksigner prints it, Play
+      # Protect reports it as the developer, and several installers show it on
+      # the confirmation screen - so a personal account name here would be
+      # published to every device the APK is ever opened on. An earlier version
+      # of this file carried one.
+      #
+      # Changing the subject means minting a new key, which breaks upgrades for
+      # anyone holding a copy signed by the old one. That was acceptable exactly
+      # once, on the same build that changed the application id, because a new
+      # application id already forces a clean install.
+      #
+      # The key is stored in the open, which is a deliberate trade. The
+      # alternative - a secret - would mean a human generating a keystore,
+      # base64ing it and pasting four values into repository settings, and would
+      # have to be repeated on every fork or restore. This app ships no
+      # credentials, talks to one public page, and is never listed in a store,
+      # so the only thing the key protects is the ability to publish an upgrade
+      # to a package that is only ever installed by hand. Convenience wins. If
+      # this app ever gains an account or goes to a store, move the keystore
+      # into BBG_KEYSTORE_BASE64 and delete the committed copy.
       #
       # A push made with GITHUB_TOKEN does not start another workflow run, so
       # committing the key here cannot loop.
@@ -73,7 +84,7 @@ jobs:
               -alias bbglive \
               -keyalg RSA -keysize 4096 -validity 10000 \
               -storepass bbglive -keypass bbglive \
-              -dname "CN=Bloomberg Live, OU=Personal, O=kobolibra, C=CN"
+              -dname "CN=Bloomberg Live, OU=Bloomberg Live, O=Bloomberg Live"
             base64 -w0 "$RUNNER_TEMP/bbg.jks" > "$KEY_B64"
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -119,15 +130,14 @@ jobs:
           tag_name: apk-${{ github.run_number }}
           name: Bloomberg Live APK (build ${{ github.run_number }})
           body: |
-            A WebView shell around https://kobolibra.github.io/worldmonitor/
-
             Properly signed release build, not a debug build, so Play Protect
             has far less to complain about.
 
-            The first signed build has to be installed after uninstalling the
-            old debug copy - the certificates differ and Android will not
-            replace one with the other. Every build after that installs
-            straight over the top.
+            This build changes the package to `com.bbglive.app` and is signed
+            with a new certificate. Android treats that as a different app, so
+            the previously installed copy has to be uninstalled first - it will
+            not be replaced in place. Every build after this one installs
+            straight over the top again.
 
             Download `bloomberg-live.apk` below and open it on the device.
             Installation from unknown sources still has to be allowed once.

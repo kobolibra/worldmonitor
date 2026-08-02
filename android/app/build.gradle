@@ -19,11 +19,23 @@ def buildNumber = Integer.parseInt(System.getenv('BBG_VERSION_CODE') ?: '1')
 def buildName   = System.getenv('BBG_VERSION_NAME') ?: '1.0'
 
 android {
-	namespace 'com.kobolibra.bbglive'
+	// Neither of the next two lines is an internal detail.
+	//
+	// The application id is what the installer prints, what Settings shows on
+	// the app's detail page, and what adb and every package manager report. The
+	// namespace is where the compiled classes live, so it is what the activity's
+	// component name and every crash trace read. An earlier version of this file
+	// put a person's account name in both, which meant an app installed by hand
+	// on a television announced its owner in three places.
+	//
+	// They are kept identical because there is no reason for them to differ, and
+	// because a namespace left behind is exactly the sort of leftover that is
+	// noticed a year later in a stack trace.
+	namespace 'com.bbglive.app'
 	compileSdk 34
 
 	defaultConfig {
-		applicationId 'com.kobolibra.bbglive'
+		applicationId 'com.bbglive.app'
 		minSdk 24
 		targetSdk 34
 		// The build number, so every published APK installs over the previous
