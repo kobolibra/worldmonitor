@@ -68,8 +68,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
 	/// Mirrors the hls.js settings in app.js, so both paths behave alike.
 	private let targetOffset = 18.0
-	/// A feed that has produced nothing at all by now is not going to.
-	private let startupDeadline = 20.0
+	/// How much video to keep ahead of the playhead. hls.js on this page is
+	/// allowed forty seconds and uses it; thirty here is the difference between
+	/// riding out a hiccup on a long path and stopping for it.
+	private let forwardBuffer = 30.0
+	/// A feed that has produced nothing at all by now is not going to. Generous
+	/// on purpose: calling failure on a slow path that would have opened costs a
+	/// handover to the slower engine and then a second cold start.
+	private let startupDeadline = 30.0
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		buildMenuBar()
@@ -223,20 +229,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
 		let asset = AVURLAsset(url: u)
 		let playerItem = AVPlayerItem(asset: asset)
-		// Sit a fixed distance behind the live edge rather than letting the
-		// framework choose, so the figure in the rail means the same thing here
-		// as it does under hls.js.
-		playerItem.automaticallyPreservesTimeOffsetFromLive = true
+
+		// Where to sit behind the live edge, rather than letting the framework
+		// choose, so the figure in the rail means the same thing here as it does
+		// under hls.js.
 		playerItem.configuredTimeOffsetFromLive =
 			CMTime(seconds: targetOffset, preferredTimescale: 600)
+
+		// Aim for that offset, but do not chase it back after losing it.
+		//
+		// Preserving the offset sounds like discipline and is in fact the opposite:
+		// the only ways to recover lost time are to play faster or to skip ahead,
+		// and both spend buffer that a stall has just proved to be empty. The
+		// result on a long path is a loop - starve, stall, rush, starve - which is
+		// exactly the stutter this app had. Apple documents the flag as increasing
+		// the likelihood of stalling. Drifting a few seconds further behind costs
+		// nothing on a news channel, and the LIVE control is already there for
+		// deliberately returning to the edge.
+		playerItem.automaticallyPreservesTimeOffsetFromLive = false
+
+		// Hold a real cushion. Without this the item keeps only what the framework
+		// considers the minimum, which on a stable connection is invisible and on
+		// a congested one is the whole problem.
+		playerItem.preferredForwardBufferDuration = forwardBuffer
 
 		let p = AVPlayer(playerItem: playerItem)
 		p.isMuted = muted
 		p.volume = 1
-		// Start as soon as there is something to show. The retry ladder in the
-		// page already handles a feed that genuinely will not open, and waiting
-		// longer only makes the first frame later.
-		p.automaticallyWaitsToMinimizeStalling = false
+
+		// Wait until there is enough to play through, instead of starting on the
+		// first frame available.
+		//
+		// This was false, to get a picture up sooner. It does do that - and then
+		// it keeps doing it, on every rebuffer, for the rest of the session,
+		// because the setting is not about the first frame but about whether the
+		// player is ever allowed to wait. A couple of seconds at the start buys a
+		// stream that does not break up, which is the trade anyone would make.
+		// hls.js was never configured the other way on this page either:
+		// lowLatencyMode is off there for the same reason.
+		p.automaticallyWaitsToMinimizeStalling = true
 
 		let layer = AVPlayerLayer(player: p)
 		// Never crop. The graphics package on this channel lives at the edges of
