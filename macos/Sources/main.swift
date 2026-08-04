@@ -137,6 +137,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	// after the ladder has settled, never against a window too shallow to carry
 	// one, and withdrawn for the session if the ladder collapses under it.
 	//
+	// A cushion is only worth anything if there is somewhere to put it, though,
+	// and that turned out to be the harder half: where the playhead stands is
+	// not a startup decision either, and treating it as one is what produced
+	// 600 kbps at 0.0s behind live in build 31. See applyStation.
+	//
 	// The other pair of things the framework does not offer at all - a cushion
 	// that applies only after a starve, and a ceiling on the rate used to
 	// recover the offset - are what the Android build has always had. They live
@@ -167,7 +172,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// A feed that has produced nothing at all by now is not going to.
 	private let startupDeadline = 20.0
 	/// A feed that has produced nothing by now is worth one intervention first.
-	private let rescueAfter = 6.0
+	/// Longer than it used to be, because the first play() is deferred now: the
+	/// window in which a first frame can arrive on its own starts later, and
+	/// spending the rescue early costs the offset the rescue clears.
+	private let rescueAfter = 8.0
 	/// How long to wait for a live window before starting without one.
 	private let startupGrace = 1.5
 	/// Startup is polled far faster than the rail, because both things that
@@ -476,6 +484,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		p.pause()
 	}
 
+	/// The page's LIVE button: go to the edge now.
+	///
+	/// Station keeping will walk the playhead back to the offset a little later,
+	/// which is not a fight - it is what ExoPlayer does with the same request,
+	/// because seekToDefaultPosition does not cancel a target offset there
+	/// either. The viewer gets the newest frame available immediately and the
+	/// cushion re-forms behind it.
 	private func jumpToLive() {
 		guard let it = item, let end = it.seekableTimeRanges.last?.timeRangeValue.end else { return }
 		governor.releaseHold()
@@ -502,20 +517,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// two, never leaves the bottom rung and never produces a frame: connecting,
 	/// forever, on a URL that plays perfectly on a television.
 	///
-	/// So the offset is applied once, after the window has been measured, and
-	/// only as deep as the window can carry - six seconds are kept in hand
-	/// because the oldest segment is always on its way out. A window with no
-	/// room for an editorial offset at all gets none: the framework's own
-	/// default, which is derived from the target duration it has just read, is a
-	/// better guess than any constant chosen here. The governor's catch-up
-	/// target follows the same number down, or it would spend the whole session
-	/// trying to recover an offset that does not exist.
+	/// So the offset is applied after the window has been measured, and only as
+	/// deep as the window can carry - six seconds are kept in hand because the
+	/// oldest segment is always on its way out. A window with no room for an
+	/// editorial offset at all gets none: the framework's own default, which is
+	/// derived from the target duration it has just read, is a better guess than
+	/// any constant chosen here. The governor's catch-up target follows the same
+	/// number down, or it would spend the whole session trying to recover an
+	/// offset that does not exist.
 	///
 	/// It is also applied before the first play(), not after it. Writing this
 	/// property onto an item that is already presenting frames moves the
 	/// playhead by the whole offset and refills the buffer from nothing, which
 	/// is a hitch on every single start; the web and Android paths both take
 	/// their offset before playback begins, and now so does this one.
+	///
+	/// But it is attempted on every tick until it succeeds, and that distinction
+	/// is not pedantry. Build 31 ran this only while the first frame was still
+	/// pending, which reads as an optimisation and is a trapdoor: the guard
+	/// below makes it a no-op once an offset is in force, so the only thing the
+	/// extra condition could do was skip the case where no offset had been
+	/// placed yet. A feed that had not published a seekable range by the time
+	/// its first frame arrived therefore never got one at all, for the whole
+	/// session - which is the 600 kbps at 6.9s buffered and 0.0s behind live
+	/// that was reported against that build. Holding the position afterwards is
+	/// applyStation's job.
 	private func applyLiveOffset(_ it: AVPlayerItem) {
 		guard appliedOffset == 0,
 			let range = it.seekableTimeRanges.last?.timeRangeValue
@@ -540,7 +566,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// the whole point of deferring is that the first frame presented should
 	/// already be at the offset. A feed that will not produce a seekable range
 	/// promptly is not made better by waiting for one, so after the grace period
-	/// this starts anyway and the framework's own default offset applies.
+	/// this starts anyway and the framework's own default offset applies - and
+	/// applyStation puts a real one in place as soon as there is a window to
+	/// measure, rather than leaving the feed on the edge for the session.
 	private func beginPlayback(_ p: AVPlayer, _ it: AVPlayerItem) {
 		guard !startRequested, it.status == .readyToPlay else { return }
 		if appliedOffset == 0, Date().timeIntervalSince(startedAt) < startupGrace { return }
@@ -555,6 +583,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// jumps to the edge once - the same thing the page's LIVE button asks for.
 	/// Spent at most once per item, and well before the startup deadline, since
 	/// letting that expire costs the whole native path for the session.
+	///
+	/// The offset it clears is no longer cleared for good. Sitting on the live
+	/// edge is what collapses the ladder, so leaving a rescued item there was
+	/// trading a black screen for 400 kbps; applyStation walks it back once the
+	/// feed is actually producing frames.
 	private func rescueStartup(_ p: AVPlayer, _ it: AVPlayerItem) {
 		guard !rescuedStartup,
 			it.status == .readyToPlay,
@@ -570,6 +603,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			toleranceBefore: CMTime(seconds: 3, preferredTimescale: 600),
 			toleranceAfter: .zero)
 		p.play()
+	}
+
+	/// Put the playhead back where it belongs, for as long as the item lives.
+	///
+	/// Standing back from the live edge is an invariant, and this path was the
+	/// only one of the three that ever treated it as a single startup action.
+	/// ExoPlayer carries setTargetOffsetMs on the MediaItem for as long as the
+	/// item exists, so it keeps station continuously and walks back to 18s even
+	/// after seekToDefaultPosition has deliberately put the playhead on the
+	/// edge; hls.js maintains liveSyncDuration the same way. Here one write to
+	/// configuredTimeOffsetFromLive was the entire mechanism, so anything that
+	/// lost it - an unmeasurable window at the moment of the first frame, the
+	/// startup rescue above, a viewer pressing LIVE - lost it until the feed was
+	/// reopened.
+	///
+	/// That is not a cosmetic difference. A playhead on the live edge has
+	/// nothing ahead of it to prefetch, so the throughput estimate falls apart
+	/// and the ladder follows it down: build 11 reached that state by switching
+	/// the offset off, build 31 reached it by never placing one, and both
+	/// reports read the same - bottom rung, no cushion, zero seconds behind
+	/// live.
+	///
+	/// The policy is in Playback.swift, along with the evidence delay and the
+	/// cooldown that keep a correction from becoming a nervous tic: every one of
+	/// them costs a reposition and a refill, so they have to be rare and they
+	/// have to be earned.
+	private func applyStation(
+		_ p: AVPlayer, _ it: AVPlayerItem, sample: PlaybackSample, now: Double
+	) {
+		var window: Double?
+		if let range = it.seekableTimeRanges.last?.timeRangeValue {
+			let seconds = CMTimeGetSeconds(range.duration)
+			if seconds.isFinite, seconds > 0 { window = seconds }
+		}
+
+		let decision = governor.station(
+			sample, window: window, applied: appliedOffset, now: now)
+		switch decision {
+		case .unchanged:
+			return
+
+		case .place(let offset):
+			// Nothing was in force, so stating the offset is enough: the
+			// framework repositions from wherever it had settled.
+			appliedOffset = offset
+			governor.tuning.targetOffset = offset
+			it.configuredTimeOffsetFromLive =
+				CMTime(seconds: offset, preferredTimescale: 600)
+
+		case .restore(let offset):
+			// An offset is in force and the playhead is on the edge regardless,
+			// so it is being ignored and has to be moved by hand.
+			appliedOffset = offset
+			governor.tuning.targetOffset = offset
+			it.configuredTimeOffsetFromLive =
+				CMTime(seconds: offset, preferredTimescale: 600)
+			guard let end = it.seekableTimeRanges.last?.timeRangeValue.end else { return }
+			let mark = CMTimeSubtract(end, CMTime(seconds: offset, preferredTimescale: 600))
+			// Loose tolerances on purpose: this is a request to be roughly a
+			// cushion's distance back, not to land on a frame, and an exact seek
+			// on a live playlist costs more than it buys.
+			p.seek(
+				to: mark,
+				toleranceBefore: CMTime(seconds: 2, preferredTimescale: 600),
+				toleranceAfter: CMTime(seconds: 2, preferredTimescale: 600))
+		}
 	}
 
 	// MARK: - Quality
@@ -822,12 +921,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		}
 
 		// Where to stand is decided from the window, so it cannot be decided
-		// before there is one - and the first play() waits on that decision,
-		// because moving the playhead afterwards is a hitch on every start. A
-		// first frame that never arrives is still worth one intervention before
-		// the deadline above takes the native path away.
+		// before there is one. This runs on every tick and not only during
+		// startup: it is already a no-op once an offset is in force, so the only
+		// thing gating it on the first frame ever did was skip the feeds that had
+		// no measurable window yet when their first frame arrived - and leave
+		// those on the live edge for the whole session.
+		applyLiveOffset(it)
+
+		// The first play() waits on that decision, because moving the playhead
+		// afterwards is a hitch on every start. A first frame that never arrives
+		// is still worth one intervention before the deadline above takes the
+		// native path away.
 		if !everPlayed {
-			applyLiveOffset(it)
 			beginPlayback(p, it)
 			rescueStartup(p, it)
 		}
@@ -880,6 +985,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		// A dropped pin reopens the player, which means the item this tick was
 		// reading is gone and the stats about to be sent describe nothing.
 		if govern(p, sample: sample, now: stamp) { return }
+		// Station first: the cushion is sized from the offset in force, so a
+		// correction made here is one the claim below can be based on.
+		applyStation(p, it, sample: sample, now: stamp)
 		applyCushion(it, sample: sample, now: stamp)
 
 		var payload: [String: Any] = ["t": "stats"]
