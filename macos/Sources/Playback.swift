@@ -115,31 +115,35 @@ struct PlaybackTuning {
 	// walks back to 18s after seekToDefaultPosition has deliberately put the
 	// playhead on the edge. hls.js does the same from liveSyncDuration. Here the
 	// offset was one write to configuredTimeOffsetFromLive during startup, so
-	// anything that lost it lost it for the entire session:
+	// anything that lost it lost it for the entire session: the window was not
+	// yet measurable when the first frame arrived, so no offset was ever
+	// written. That is the 600 kbps / 6.9s / 0.0s report, and it ends where
+	// build 11 ended, because a playhead on the live edge has nothing ahead of
+	// it to prefetch, so the throughput estimate collapses and the ladder goes
+	// down with it. Being on the edge is the cause; a bottom-rung bitrate is the
+	// symptom.
 	//
-	//   * the window was not yet measurable when the first frame arrived, so no
-	//     offset was ever written (the 600 kbps / 6.9s / 0.0s report), or
-	//   * rescueStartup cleared the offset and seeked to the edge to get a first
-	//     frame out of a feed that had produced none, and nothing ever restored
-	//     it afterwards.
+	// What this must not do is overrule the startup path. rescueStartup gives
+	// the offset up on purpose, for feeds that produced no first frame at all
+	// with one in force, and build 33 could not tell that decision apart from
+	// never having made one - so it hauled exactly those feeds back to 18s, the
+	// item failed, the page reconnected, and the cycle repeated. A deliberate
+	// surrender is now respected.
 	//
-	// Both end in the same place, and that place is build 11: a playhead on the
-	// live edge has nothing ahead of it to prefetch, so the throughput estimate
-	// collapses and the ladder goes down with it. Being on the edge is the
-	// cause; a bottom-rung bitrate is the symptom.
-	//
-	// So the offset is now asserted whenever the playhead is measured away from
-	// where it belongs. The evidence delay and the cooldown are what keep that
-	// from becoming a nervous tic, because re-asserting an offset costs a
-	// reposition and a refill.
+	// The evidence delay and the cooldown are what keep the rest from becoming a
+	// nervous tic, because a correction costs a reposition and a refill, and the
+	// viewer sees every one of them.
 
 	/// Nearer the live edge than this is not standing back at all.
 	var stationFloor = 3.0
-	/// How long the playhead must be measured off station before it is moved.
-	var stationEvidence = 5.0
-	/// The least time between two corrections. A correction is a rebuffer, so
-	/// this is generous on purpose.
-	var stationCooldown = 45.0
+	/// How long the playhead must be measured continuously off station before it
+	/// is moved. Long enough that a dip which recovers on its own never costs a
+	/// refill.
+	var stationEvidence = 8.0
+	/// The least time between two corrections. A correction is a rebuffer, and a
+	/// feed that cannot hold station would otherwise pay for one on repeat, so
+	/// this is deliberately generous.
+	var stationCooldown = 90.0
 	/// Kept between the offset and the oldest segment in the window, which is
 	/// always the next one to expire.
 	var stationHeadroom = 6.0
@@ -242,13 +246,18 @@ final class PlaybackGovernor {
 
 	/// Whether the playhead still stands where it was told to.
 	///
-	/// `applied` is the offset in force on the item: zero when none was ever
-	/// written, negative when one was deliberately given up. Both mean off
-	/// station, and both are recoverable - which is the whole point, since
-	/// before this existed either one was permanent for the session.
+	/// `applied` is the offset in force on the item, and its sign matters:
+	///
+	///   * zero means none was ever written, because the window was not
+	///     measurable in time. That is recoverable, and recovering it is what
+	///     this function is for.
+	///   * negative means the startup path gave an offset up deliberately, after
+	///     a feed produced no first frame with one in force. That is a finding
+	///     about the feed, not a gap to be filled in, and overruling it is how
+	///     build 33 turned a low rung into a reconnect loop.
 	///
 	/// `window` is the seekable range the feed currently publishes. It is the
-	/// only guard that matters: an offset deeper than the window parks the
+	/// only other guard that matters: an offset deeper than the window parks the
 	/// playhead on a segment that is about to expire, which is its own failure
 	/// mode and a far worse one than sitting near the edge.
 	func station(
@@ -257,6 +266,12 @@ final class PlaybackGovernor {
 		// Before the first frame the offset is placed by the startup path, which
 		// can do it without a reposition because nothing is on screen yet.
 		guard s.started, !s.viewerPaused else {
+			offStationSince = nil
+			return .unchanged
+		}
+		// A rescued feed has already told us it cannot carry an offset. Hauling it
+		// back would fail the item, and the retry would rescue it again.
+		guard applied >= 0 else {
 			offStationSince = nil
 			return .unchanged
 		}
@@ -275,7 +290,7 @@ final class PlaybackGovernor {
 
 		// Nothing in force at all: writing the offset is enough, and the
 		// framework repositions from there.
-		let nothingInForce = applied <= 0
+		let nothingInForce = applied == 0
 		// An offset is in force and the playhead is on the edge regardless, so it
 		// is being ignored and has to be seeked back. An unmeasurable distance is
 		// not evidence of anything.

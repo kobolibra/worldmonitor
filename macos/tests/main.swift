@@ -209,8 +209,8 @@ do {
 	let g=PlaybackGovernor()
 	let s=sample(ahead:6.9,behind:0,bitrate:600_000)
 	check("riding the edge is noticed but not acted on at once",g.station(s,window:30,applied:0,now:3100),.unchanged)
-	check("nor a moment too early",g.station(s,window:30,applied:0,now:3104),.unchanged)
-	check("then the offset is put back",g.station(s,window:30,applied:0,now:3105),.place(offset:18))
+	check("nor a moment too early",g.station(s,window:30,applied:0,now:3107),.unchanged)
+	check("then the offset is put back",g.station(s,window:30,applied:0,now:3108),.place(offset:18))
 	check("and remembered",g.stationOffset == 18)
 }
 
@@ -220,23 +220,31 @@ do {
 	let g=PlaybackGovernor()
 	let s=sample(behind:0.5)
 	check("an ignored offset waits for evidence too",g.station(s,window:30,applied:18,now:3200),.unchanged)
-	check("and then the playhead is moved",g.station(s,window:30,applied:18,now:3206),.restore(offset:18))
+	check("and then the playhead is moved",g.station(s,window:30,applied:18,now:3208),.restore(offset:18))
 }
 
-// After rescueStartup has cleared the offset and jumped to the edge to get a
-// first frame out of a stubborn feed, station keeping is what walks it back.
+// The build 33 regression, and the reason this file's 88 passing checks did not
+// catch it: the assertion here used to demand a .place, on the reasoning that a
+// rescued item must not be left on the edge. That reasoning was wrong. A
+// negative `applied` is not an offset that went missing, it is rescueStartup
+// reporting that this feed produced no first frame with one in force - so
+// hauling it back to 18s failed the item, the page reconnected, startup rescued
+// it again, and the viewer got a permanent “interrupted, reconnecting” cycle.
+// A low rung is watchable. That was not.
 do {
 	let g=PlaybackGovernor()
 	let s=sample(behind:0)
 	_=g.station(s,window:30,applied:-1,now:3300)
-	check("a rescued item does not stay on the edge",g.station(s,window:30,applied:-1,now:3306),.place(offset:18))
+	check("a rescued feed is not hauled back",g.station(s,window:30,applied:-1,now:3310),.unchanged)
+	check("and no offset is asserted behind its back",g.stationOffset == nil)
+	check("even long after the evidence would have been enough",g.station(s,window:30,applied:-1,now:3380),.unchanged)
 }
 
 // A window that cannot hold the full target still gets what it can hold.
 do {
 	let g=PlaybackGovernor()
 	_=g.station(sample(behind:0),window:20,applied:0,now:3400)
-	check("a 20s window gives up 6s of headroom",g.station(sample(behind:0),window:20,applied:0,now:3406),.place(offset:14))
+	check("a 20s window gives up 6s of headroom",g.station(sample(behind:0),window:20,applied:0,now:3408),.place(offset:14))
 }
 
 do {
@@ -270,29 +278,31 @@ do {
 	check("a recovery clears the evidence",g.station(sample(behind:17),window:30,applied:18,now:3803),.unchanged)
 	_=g.station(sample(behind:1),window:30,applied:18,now:3804)
 	check("so the clock starts over",g.station(sample(behind:1),window:30,applied:18,now:3806),.unchanged)
-	check("and only then is it moved",g.station(sample(behind:1),window:30,applied:18,now:3810),.restore(offset:18))
+	check("and only then is it moved",g.station(sample(behind:1),window:30,applied:18,now:3812),.restore(offset:18))
 }
 
-// Every correction costs a refill, so they are rate limited.
+// Every correction costs a refill, so they are rate limited - and standing
+// evidence throughout the cooldown must not shorten it.
 do {
 	let g=PlaybackGovernor()
 	let s=sample(behind:0)
 	_=g.station(s,window:30,applied:18,now:3900)
-	check("the first correction happens",g.station(s,window:30,applied:18,now:3906),.restore(offset:18))
+	check("the first correction happens",g.station(s,window:30,applied:18,now:3908),.restore(offset:18))
 	check("a second one is not attempted straight away",g.station(s,window:30,applied:18,now:3920),.unchanged)
-	check("nor a moment before the cooldown is up",g.station(s,window:30,applied:18,now:3950),.unchanged)
-	check("but the feed is not abandoned either",g.station(s,window:30,applied:18,now:3952),.restore(offset:18))
+	check("nor part way through the cooldown",g.station(s,window:30,applied:18,now:3950),.unchanged)
+	check("nor a moment before it is up",g.station(s,window:30,applied:18,now:3997),.unchanged)
+	check("but the feed is not abandoned either",g.station(s,window:30,applied:18,now:3998),.restore(offset:18))
 }
 
 do {
 	let g=PlaybackGovernor()
 	let s=sample(behind:0)
 	_=g.station(s,window:30,applied:18,now:4000)
-	_=g.station(s,window:30,applied:18,now:4006)
+	_=g.station(s,window:30,applied:18,now:4008)
 	g.reset()
 	check("a new item forgets the correction",g.stationOffset == nil)
-	_=g.station(s,window:30,applied:18,now:4007)
-	check("and is not held back by the old cooldown",g.station(s,window:30,applied:18,now:4013),.restore(offset:18))
+	_=g.station(s,window:30,applied:18,now:4009)
+	check("and is not held back by the old cooldown",g.station(s,window:30,applied:18,now:4017),.restore(offset:18))
 }
 
 print("")
