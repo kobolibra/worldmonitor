@@ -176,39 +176,70 @@
 	   surfaces, so they still read against moving video.
 
 	   The rest of this sheet is the two controls built below: the pointer's
-	   control bar, whose proportions are deliberately WebKit's, and the
-	   television's centred badge. */
+	   control bar, whose proportions are WebKit's own, and the television's
+	   centred badge. */
 	var css = document.createElement("style");
 	css.textContent =
 		"html.native,html.native body{background:transparent !important;}" +
 		"html.native .ambient{display:none !important;}" +
-		".nbar{position:absolute;left:14px;right:14px;bottom:14px;z-index:6;" +
-		"height:38px;display:flex;align-items:center;gap:6px;padding:0 7px;" +
-		"border-radius:19px;border:1px solid rgba(255,255,255,.10);" +
-		"background:rgba(28,28,30,.56);-webkit-backdrop-filter:blur(26px) saturate(180%);" +
-		"backdrop-filter:blur(26px) saturate(180%);box-shadow:0 4px 18px rgba(0,0,0,.38);" +
+		/* WebKit's inline controls, measured rather than reinterpreted. The first
+		   version of this bar was a 38 point pill of my own invention with a 19
+		   point radius, which is not what the same picture looks like one engine
+		   over: WebKit draws a rounded rectangle inset ten points from the
+		   picture's edges, 40 points tall, with 28 point round buttons, 16 point
+		   glyphs, a four point track and a twelve point knob. A replacement for a
+		   platform control that does not match the platform control is just a
+		   second design, and the viewer can switch engines with one menu item and
+		   see both. */
+		".nbar{position:absolute;left:10px;right:10px;bottom:10px;z-index:6;" +
+		"height:40px;display:flex;align-items:center;gap:2px;padding:0 8px;" +
+		"border-radius:11px;border:1px solid rgba(255,255,255,.08);" +
+		"background:rgba(38,38,40,.62);-webkit-backdrop-filter:blur(20px) saturate(180%);" +
+		"backdrop-filter:blur(20px) saturate(180%);box-shadow:0 3px 14px rgba(0,0,0,.34);" +
 		"opacity:0;pointer-events:none;transform:translateY(6px);" +
 		"transition:opacity .18s ease,transform .18s ease;}" +
 		".screen:hover .nbar,.nbar:focus-within{opacity:1;pointer-events:auto;" +
 		"transform:translateY(0);}" +
+		/* Cinema mode lifts the rail out of the layout and floats it over the
+		   picture, which means the stage now reaches the bottom of the window and
+		   a bar ten points above that edge lands on top of the rail's text - the
+		   codec, buffer and latency figures, clipped along their top edge. The
+		   real lift is measured from the rail in placeBar(), because its height
+		   depends on the font, the safe-area inset and the television styling;
+		   this value is only the fallback for the tick before that runs. */
+		"body.cinema .nbar{bottom:74px;}" +
+		/* And whatever hides the header and the rail has to hide this too.
+
+		   Hover cannot do that job, which is the whole of the second fault: in
+		   fullscreen the pointer sits motionless over the picture, :hover stays
+		   true for as long as the channel runs, and so the one control that was
+		   supposed to appear on approach never went away again. The page already
+		   keeps the answer - body.cinema.idle, set by the same timer that fades
+		   the two bars - so this follows it rather than keeping a timer of its
+		   own and disagreeing with it by a second or two. */
+		"body.cinema:not(.idle) .nbar{opacity:1;pointer-events:auto;transform:none;}" +
+		"body.cinema.idle .nbar{opacity:0;pointer-events:none;transform:translateY(6px);}" +
 		".nbar button{appearance:none;-webkit-appearance:none;border:0;padding:0;" +
-		"background:transparent;color:#fff;width:30px;height:30px;flex:0 0 auto;" +
+		"background:transparent;color:#fff;width:28px;height:28px;flex:0 0 auto;" +
 		"border-radius:50%;display:flex;align-items:center;justify-content:center;" +
 		"cursor:pointer;transition:background .12s ease;}" +
 		".nbar button:hover{background:rgba(255,255,255,.15);}" +
 		".nbar button:active{background:rgba(255,255,255,.24);}" +
-		".nbar svg{width:17px;height:17px;display:block;}" +
+		".nbar svg{width:16px;height:16px;display:block;}" +
 		".ntrack{flex:1 1 auto;min-width:40px;height:20px;display:flex;" +
-		"align-items:center;cursor:pointer;padding:0 6px;}" +
+		"align-items:center;cursor:pointer;padding:0 8px;}" +
 		".nrail{position:relative;width:100%;height:4px;border-radius:2px;" +
-		"background:rgba(255,255,255,.28);}" +
+		"background:rgba(255,255,255,.30);}" +
 		".nfill{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:2px;" +
 		"background:#fff;transition:width .4s linear;}" +
-		".nknob{position:absolute;top:50%;left:100%;width:11px;height:11px;" +
-		"margin:-5.5px 0 0 -5.5px;border-radius:50%;background:#fff;" +
+		".nknob{position:absolute;top:50%;left:100%;width:12px;height:12px;" +
+		"margin:-6px 0 0 -6px;border-radius:50%;background:#fff;" +
 		"box-shadow:0 1px 3px rgba(0,0,0,.55);transition:left .4s linear;}" +
-		".nlive{flex:0 0 auto;display:flex;align-items:center;gap:5px;padding:0 6px 0 2px;" +
-		"font:inherit;font-size:10px;letter-spacing:.09em;color:rgba(255,255,255,.84);}" +
+		/* Where WebKit prints an elapsed time. Same size, same tabular figures,
+		   same muted white - a live channel simply has a word there instead. */
+		".nlive{flex:0 0 auto;display:flex;align-items:center;gap:5px;padding:0 8px 0 4px;" +
+		"font:inherit;font-size:11px;font-weight:500;letter-spacing:.06em;" +
+		"font-variant-numeric:tabular-nums;color:rgba(255,255,255,.86);}" +
 		".nlive i{width:6px;height:6px;border-radius:50%;font-style:normal;" +
 		"background:#27d17c;}" +
 		".nbar.behind .nfill,.nbar.behind .nknob{background:#ff6a00;}" +
@@ -258,11 +289,13 @@
 		post({a:"rect", x:r.left, y:r.top, w:r.width, h:r.height, dpr:dpr,
 			vw:window.innerWidth, vh:window.innerHeight});
 	}
-	window.addEventListener("resize", function(){ lastRect = ""; sendRect(); });
+	window.addEventListener("resize", function(){ lastRect = ""; sendRect(); placeBar(); });
 	/* Entering cinema mode, hiding the bars and a fullscreen transition all
 	   change the stage without firing a resize, and none of them are worth
-	   wiring individually. */
-	setInterval(sendRect, 400);
+	   wiring individually. Which is also why the bar's own position is settled
+	   on this tick: the rail it has to clear appears, changes height and is
+	   taken away again by the same events. */
+	setInterval(function(){ sendRect(); placeBar(); }, 400);
 
 	/* ---------- Controls on the picture ----------
 	   Everything a person can do to the picture with a mouse was, until now,
@@ -280,8 +313,11 @@
 	   So this bar is a replacement for a platform control, and a replacement for
 	   a platform control has to speak that platform's visual language. Glyphs,
 	   not words: a triangle and two bars for play and pause, a speaker, two pairs
-	   of corner arrows for fullscreen. A pill inset from the picture's edges with
-	   a track running through the middle of it.
+	   of corner arrows for fullscreen. A rounded rectangle inset from the
+	   picture's edges with a track running through the middle of it, in WebKit's
+	   own proportions rather than proportions of my choosing - see the sheet
+	   above, where the first attempt at this and the reason it was wrong are
+	   written down.
 
 	   The track is the one place where the imitation stops. A live channel has no
 	   seekable timeline; WebKit drew a scrubber because a video element always
@@ -338,6 +374,38 @@
 		return b;
 	}
 
+	/* ---------- Clearing the rail ----------
+	   Two layouts, and the bar has to be told which one it is in.
+
+	   Ordinarily the rail is a flex row underneath the stage, the stage ends
+	   where the rail begins, and ten points above the stage's bottom edge is ten
+	   points above the rail - which is exactly right.
+
+	   In cinema mode the rail becomes position:fixed at the bottom of the window
+	   and floats over the picture, so that a 16:9 feed can reach every edge of a
+	   16:9 screen. The stage grows to the full viewport underneath it, and ten
+	   points above the stage's bottom edge is now ten points above the window -
+	   inside the rail, clipping the top of the codec, buffer and latency figures.
+
+	   Measured rather than tabulated, because the rail's height is a function of
+	   its font size, its two paddings, the safe-area inset and whether the
+	   television styling is on, and because a constant would go stale the first
+	   time any of those changed. The computed position tells us which layout we
+	   are in without having to know the name of the class that caused it. */
+	function placeBar(){
+		if(!bar) return;
+		var lift = 10;
+		try{
+			var rail = document.querySelector(".rail");
+			if(rail && window.getComputedStyle(rail).position === "fixed"){
+				var h = rail.getBoundingClientRect().height;
+				if(h > 0) lift = Math.round(h) + 10;
+			}
+		}catch(e){}
+		var v = lift + "px";
+		if(bar.style.bottom !== v) bar.style.bottom = v;
+	}
+
 	function buildBar(){
 		if(bar || !api || !api.screen) return;
 		bar = document.createElement("div");
@@ -392,6 +460,7 @@
 		bar.appendChild(btnMute);
 		bar.appendChild(btnFull);
 		api.screen.appendChild(bar);
+		placeBar();
 		syncBar();
 	}
 
@@ -611,7 +680,15 @@
 		latency = lat;
 		api.statLat.textContent = isFinite(lat)
 			? ("\u5ef6\u8fdf " + lat.toFixed(1) + "s") : "\u5ef6\u8fdf \u2014";
-		api.statLat.title = "\u5f53\u524d\u753b\u9762\u8ddd\u79bb\u76f4\u64ad\u8fb9\u7f18\u7684\u771f\u5b9e\u65f6\u95f4\u5dee\n\u539f\u751f\u89e3\u7801";
+		/* What this number is, exactly, because it was previously labelled "the
+		   real time difference" and it is not that. It is the distance from the
+		   playhead to the end of the seekable range - the newest moment the
+		   playlist has published - which says nothing about how long the picture
+		   took to get that far: encoding, packaging, and the CDN's own
+		   propagation all sit in front of it. Treat it as a floor under the true
+		   end-to-end delay, and as the one part of that delay this app can
+		   actually do something about. */
+		api.statLat.title = "\u753b\u9762\u843d\u540e\u4e8e\u64ad\u653e\u5217\u8868\u5df2\u53d1\u5e03\u7684\u76f4\u64ad\u8fb9\u7f18\u7684\u65f6\u95f4\n\u4e0d\u5305\u542b\u7f16\u7801\u3001\u5c01\u88c5\u4e0e CDN \u5206\u53d1\u7684\u8017\u65f6\uff0c\u771f\u5b9e\u7684\u7aef\u5230\u7aef\u5ef6\u8fdf\u6bd4\u8fd9\u4e2a\u6570\u5b57\u66f4\u5927\n\u539f\u751f\u89e3\u7801";
 
 		var behind = isFinite(lat) && lat > BEHIND_LAT;
 		api.liveBtn.classList.toggle("behind", behind);
@@ -638,6 +715,7 @@
 			api.clearState();
 			lastRect = "";
 			sendRect();
+			placeBar();
 			noteLine("\u539f\u751f\u64ad\u653e\uff1a\u6b63\u5728\u8fd0\u884c \u00b7 \u7cfb\u7edf\u89e3\u7801\u5668\u3002");
 		} else if(d.t === "tracks"){
 			tracks = (d.list || []).filter(function(t){ return t && t.h; })
