@@ -124,10 +124,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	//
 	// So the only thing set is where to stand relative to the live edge, which
 	// is a genuine editorial choice and not a performance hint.
+	//
+	// What the framework does not offer at all is the pair of things the Android
+	// build has always had: a cushion that applies only after a starve, and a
+	// ceiling on the rate used to recover the offset. Neither is a hint about
+	// which rung to prefer, which is exactly why neither could be expressed as
+	// one of the knobs above. They live in Playback.swift and are applied on the
+	// same one second tick the rail already runs on.
+
+	/// Decides, per tick, whether to hold through a starve, whether to run
+	/// slightly fast to recover the live offset, and whether a pinned rung has
+	/// stopped being worth its pin.
+	private let governor = PlaybackGovernor()
+
+	/// Paused by the viewer, as opposed to paused by the governor while the
+	/// buffer refills. The two must not be confused: a held pause resumes
+	/// itself, a viewer's pause does not, and rate == 0 cannot tell them apart.
+	private var userPaused = false
 
 	/// How far behind the live edge to sit. Matches liveSyncDuration in the web
-	/// player's hls.js configuration, so both paths feel alike.
-	private let targetOffset = 18.0
+	/// player's hls.js configuration and TARGET_OFFSET_MS on Android, so all
+	/// three paths feel alike. Kept in one place, in the tuning.
+	private var targetOffset: Double { governor.tuning.targetOffset }
 	/// A feed that has produced nothing at all by now is not going to.
 	private let startupDeadline = 20.0
 
@@ -243,8 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		case "mute":
 			setMuted((o["on"] as? Bool) ?? false)
 		case "toggle":
-			guard let p = player else { return }
-			if p.rate == 0 { p.play() } else { p.pause() }
+			toggleByViewer()
 		case "live":
 			jumpToLive()
 		case "level":
@@ -300,6 +317,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		muted = startMuted
 		everPlayed = false
 		startedAt = Date()
+		userPaused = false
+		governor.reset()
 
 		let asset = AVURLAsset(url: u)
 		let playerItem = AVPlayerItem(asset: asset)
@@ -315,6 +334,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		playerItem.automaticallyPreservesTimeOffsetFromLive = true
 		playerItem.configuredTimeOffsetFromLive =
 			CMTime(seconds: targetOffset, preferredTimescale: 600)
+
+		// Both the framework's own recovery above and the governor's catch-up
+		// below get the time back by playing slightly fast, and the default
+		// algorithm makes a newsreader sound like one at 1.1. Spectral holds the
+		// pitch, and is the algorithm meant for speech.
+		playerItem.audioTimePitchAlgorithm = .spectral
 
 		// preferredForwardBufferDuration is deliberately not set here. See the
 		// buffering note above: it does not mean "be safer", it means "prefer the
@@ -341,6 +366,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		// what this app was measured smooth on, at several Mbps with a healthy
 		// buffer. Whatever latitude the framework takes with it, on this path it
 		// uses it well. A measurement outranks a theory about a measurement.
+		//
+		// What that measurement did not cover is the other half of this one
+		// property. It governs the first frame and the frame after a starve
+		// alike, and there the fast path is simply wrong: the player resumes on
+		// the first sample to arrive and starves again seconds later. Android has
+		// always distinguished the two - 2s to start, 5s to resume - so the
+		// governor holds the second one and this stays false.
 		p.automaticallyWaitsToMinimizeStalling = false
 
 		let layer = AVPlayerLayer(player: p)
@@ -355,6 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		item = playerItem
 		playerLayer = layer
 		videoView.isHidden = false
+		applyBackingScale()
 		applyRect()
 
 		send(["t": "loading", "msg": "\u{6b63}\u{5728}\u{8fde}\u{63a5} Bloomberg \u{76f4}\u{64ad}\u{2026}"])
@@ -370,6 +403,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		player = nil
 		item = nil
 		videoView?.isHidden = true
+		userPaused = false
+		governor.reset()
 	}
 
 	private func setMuted(_ on: Bool) {
@@ -377,8 +412,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		player?.isMuted = on
 	}
 
+	/// The page's play/pause control.
+	///
+	/// Told apart from the governor's hold on purpose. During a hold the picture
+	/// is frozen and the rail says so, and a viewer pressing play then means
+	/// "now, please" - so the hold is abandoned and the cost of a thin buffer is
+	/// theirs to have asked for.
+	private func toggleByViewer() {
+		guard let p = player else { return }
+		if governor.holding {
+			governor.releaseHold()
+			userPaused = false
+			p.play()
+			return
+		}
+		if userPaused || p.rate == 0 {
+			userPaused = false
+			p.play()
+			return
+		}
+		userPaused = true
+		p.pause()
+	}
+
 	private func jumpToLive() {
 		guard let it = item, let end = it.seekableTimeRanges.last?.timeRangeValue.end else { return }
+		governor.releaseHold()
+		userPaused = false
 		player?.seek(to: end, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
 		player?.play()
 	}
@@ -408,11 +468,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// setMaxVideoSize to the same height, which leaves one eligible track - so
 	/// this also brings the two ends into agreement.
 	///
-	/// The cost is honest and intended: a pinned rung the network cannot sustain
-	/// will stall instead of quietly degrading, and changing rungs costs a short
-	/// reconnect because it is a different URL. Automatic remains the setting
-	/// that adapts. What is not acceptable is a pinned rung costing the native
-	/// path altogether, which is what reportError now prevents.
+	/// It brings one difference with it, though, and that difference was a bug.
+	/// ExoPlayer keeps an escape hatch: when no track satisfies the constraints
+	/// it plays something rather than nothing. A single-rung playlist has no
+	/// such hatch, so a pinned rung the network cannot sustain used to sit and
+	/// starve until the feed was unwatchable, while the same pick on a television
+	/// quietly degraded. The governor now supplies the hatch: a pin that has
+	/// starved for pinnedDegradeAfter seconds is dropped back to the master with
+	/// the height kept as a ceiling. Changing rungs still costs a short
+	/// reconnect, because it is a different URL.
 	private func applyRequestedLevel() {
 		guard let it = item else { return }
 
@@ -437,6 +501,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		}
 		it.preferredMaximumResolution = .zero
 		it.preferredPeakBitRate = 0
+	}
+
+	/// Give up on a pinned rung, keeping the height as a ceiling.
+	///
+	/// The ladder is forgotten along with the pin so that nothing re-pins from
+	/// it, which is the same precaution reportError takes for the same reason.
+	/// requestedHeight survives, so open() applies it as a ceiling and the
+	/// viewer's pick still means as much as AVFoundation can be made to honour.
+	private func degradeFromPin() {
+		guard pinnedHeight != 0, let master = masterURL else { return }
+		pinnedHeight = 0
+		variantURLs = [:]
+		open(master, startMuted: muted)
 	}
 
 	// MARK: - The variant ladder
@@ -581,7 +658,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	// a timer anyway, and the same tick is the cheapest place to notice that the
 	// item has failed or that nothing ever started - two conditions that would
 	// otherwise need their own observers to reach the same conclusion one second
-	// later.
+	// later. It is also where the governor is asked what to do, on the same
+	// figures the rail is about to show, so what a viewer sees and what the app
+	// acted on cannot disagree.
 
 	private func startStats() {
 		stopStats()
@@ -616,17 +695,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			send(["t": "playing"])
 		}
 
-		var payload: [String: Any] = ["t": "stats"]
-
+		// Both figures are wanted twice over - the rail shows them, the governor
+		// decides on them - so they are measured once, here.
+		var ahead: Double?
+		var behind: Double?
 		let now = it.currentTime()
 		if let loaded = it.loadedTimeRanges.last?.timeRangeValue {
-			let ahead = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(loaded), now))
-			if ahead.isFinite { payload["buf"] = max(0, ahead) }
+			let v = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(loaded), now))
+			if v.isFinite { ahead = max(0, v) }
 		}
 		if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
-			let behind = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), now))
-			if behind.isFinite { payload["lat"] = max(0, behind) }
+			let v = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), now))
+			if v.isFinite { behind = max(0, v) }
 		}
+
+		// A dropped pin reopens the player, which means the item this tick was
+		// reading is gone and the stats about to be sent describe nothing.
+		if govern(p, it, ahead: ahead, behind: behind) { return }
+
+		var payload: [String: Any] = ["t": "stats"]
+		if let ahead = ahead { payload["buf"] = ahead }
+		if let behind = behind { payload["lat"] = behind }
 		if let event = it.accessLog()?.events.last {
 			let bps = event.indicatedBitrate > 0 ? event.indicatedBitrate : event.observedBitrate
 			if bps > 0 { payload["bps"] = Int(bps) }
@@ -636,8 +725,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			payload["h"] = Int(size.height)
 		}
 		payload["muted"] = p.isMuted
-		payload["paused"] = (p.rate == 0)
+		// The viewer's intent, not the rate. A hold is not a pause: the rail
+		// would otherwise offer a play button for something that is about to
+		// resume on its own.
+		payload["paused"] = userPaused
 		send(payload)
+	}
+
+	/// Ask the governor what this tick calls for and do it.
+	///
+	/// Returns true when the player was replaced, in which case the caller must
+	/// stop: everything it has read describes an item that is no longer current.
+	private func govern(_ p: AVPlayer, _ it: AVPlayerItem, ahead: Double?, behind: Double?) -> Bool {
+		let sample = PlaybackSample(
+			bufferedAhead: ahead,
+			behindLive: behind,
+			bufferEmpty: it.isPlaybackBufferEmpty,
+			likelyToKeepUp: it.isPlaybackLikelyToKeepUp,
+			rate: Double(p.rate),
+			started: everPlayed,
+			viewerPaused: userPaused,
+			pinned: pinnedHeight != 0,
+			canDropPin: masterURL != nil)
+
+		switch governor.decide(sample, now: Date().timeIntervalSinceReferenceDate) {
+		case .none:
+			return false
+
+		case .holdForBuffer:
+			// The picture is frozen either way during a starve. Pausing on
+			// purpose is what stops the player resuming on the first sample to
+			// arrive and starving again a second later.
+			p.pause()
+			send([
+				"t": "loading",
+				"msg": "\u{6b63}\u{5728}\u{7f13}\u{51b2}\u{2026}",
+			])
+			return false
+
+		case .resume:
+			p.play()
+			send(["t": "playing"])
+			return false
+
+		case .catchUp(let rate):
+			p.rate = Float(rate)
+			return false
+
+		case .endCatchUp:
+			// Only ever lower a rate this path raised. Writing 1.0 onto a paused
+			// player would start it.
+			if p.rate > 1.0 { p.rate = 1.0 }
+			return false
+
+		case .dropPin:
+			degradeFromPin()
+			return true
+		}
 	}
 
 	/// One failure is bad luck on a long path and the page will retry. Two in a
@@ -654,10 +798,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		// the CORS-free path over a quality preference. So drop the pin, forget
 		// this feed's ladder so nothing re-pins from it, and reopen the master.
 		// The height stays requested and is applied as a ceiling from open().
-		if pinnedHeight != 0, let master = masterURL {
-			pinnedHeight = 0
-			variantURLs = [:]
-			open(master, startMuted: muted)
+		if pinnedHeight != 0, masterURL != nil {
+			degradeFromPin()
 			return
 		}
 
@@ -681,6 +823,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		v.frame = stageRect
 		playerLayer?.frame = v.bounds
 		CATransaction.commit()
+	}
+
+	/// Draw the picture at the panel's resolution rather than at half of it.
+	///
+	/// A CALayer created in code defaults to a contentsScale of 1 and does not
+	/// inherit the backing scale of the view it is added to - that inheritance
+	/// only happens for the layer AppKit makes for a layer-backed view. The
+	/// AVPlayerLayer here is added by hand, so on a Retina display it was
+	/// rendering at half the panel's resolution and being scaled up, which reads
+	/// as a soft, slightly smeared image beside the same feed on a 1:1
+	/// television.
+	///
+	/// Called again whenever the window's backing properties change, which is
+	/// also what happens when the window is dragged onto a display with a
+	/// different scale factor.
+	private func applyBackingScale() {
+		let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+		videoView?.layer?.contentsScale = scale
+		playerLayer?.contentsScale = scale
+	}
+
+	@objc private func windowChangedBackingProperties() {
+		applyBackingScale()
 	}
 
 	// The window can also be taken fullscreen by routes the page knows nothing
@@ -764,6 +929,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		centre.addObserver(
 			self, selector: #selector(windowLeftFullScreen),
 			name: NSWindow.didExitFullScreenNotification, object: window)
+		// Moving the window between a Retina display and an external one changes
+		// the backing scale under a layer that was told the old one.
+		centre.addObserver(
+			self, selector: #selector(windowChangedBackingProperties),
+			name: NSWindow.didChangeBackingPropertiesNotification, object: window)
 
 		// Restore the previous size and position if there is one, and only fall
 		// back to centring when there is not.
