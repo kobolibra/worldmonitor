@@ -3,11 +3,11 @@ import Foundation
 
 /// AVPlayer accepts `play()` before an HLS item is ready, but that request is
 /// not a durable autoplay contract: an item replacement or a live playlist
-/// settling can leave the player ready with a zero rate.  The app used to ask
+/// settling can leave the player ready with a zero rate. The app used to ask
 /// exactly once and therefore occasionally opened on a still first frame.
 ///
 /// This module-local name intentionally shadows AVFoundation.AVPlayer in
-/// main.swift.  It changes startup only: once the playhead has advanced, the
+/// main.swift. It changes startup only: once the playhead has advanced, the
 /// observer and timer are discarded, so viewer pauses and the playback
 /// governor keep their existing meaning.
 final class AVPlayer: AVFoundation.AVPlayer {
@@ -19,11 +19,6 @@ final class AVPlayer: AVFoundation.AVPlayer {
 	override init(playerItem item: AVPlayerItem?) {
 		super.init(playerItem: item)
 		armStartup(for: item)
-	}
-
-	required init?(coder: NSCoder) {
-		super.init(coder: coder)
-		armStartup(for: currentItem)
 	}
 
 	deinit {
