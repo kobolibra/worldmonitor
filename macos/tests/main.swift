@@ -5,20 +5,27 @@ func check(_ label: String, _ actual: PlaybackAction, _ expected: PlaybackAction
 	if actual == expected { print("ok    \(label)") }
 	else { print("FAIL  \(label): expected \(expected), got \(actual)"); failures += 1 }
 }
+func check(_ label: String, _ actual: CushionDecision, _ expected: CushionDecision) {
+	if actual == expected { print("ok    \(label)") }
+	else { print("FAIL  \(label): expected \(expected), got \(actual)"); failures += 1 }
+}
 func check(_ label: String, _ passed: Bool) {
 	if passed { print("ok    \(label)") }
 	else { print("FAIL  \(label)"); failures += 1 }
 }
 func sample(ahead: Double? = 10, behind: Double? = 18, empty: Bool = false,
 	keepUp: Bool = true, rate: Double = 1, started: Bool = true,
-	viewerPaused: Bool = false, pinned: Bool = false, canDropPin: Bool = true) -> PlaybackSample {
+	viewerPaused: Bool = false, pinned: Bool = false, canDropPin: Bool = true,
+	bitrate: Double? = nil) -> PlaybackSample {
 	PlaybackSample(bufferedAhead: ahead, behindLive: behind, bufferEmpty: empty,
 		likelyToKeepUp: keepUp, rate: rate, started: started,
-		viewerPaused: viewerPaused, pinned: pinned, canDropPin: canDropPin)
+		viewerPaused: viewerPaused, pinned: pinned, canDropPin: canDropPin,
+		bitrate: bitrate)
 }
 
 let tuning = PlaybackTuning()
-print("target \(tuning.targetOffset)s, resume cushion \(tuning.rebufferCushion)s, catch-up \(tuning.catchUpRate)x\n")
+print("target \(tuning.targetOffset)s, resume cushion \(tuning.rebufferCushion)s, catch-up \(tuning.catchUpRate)x")
+print("cushion \(tuning.targetOffset - tuning.cushionHeadroom)s after \(tuning.cushionSettleDelay)s, floor \(tuning.cushionBitrateFloor)\n")
 
 do { let g=PlaybackGovernor(); check("a healthy tick changes nothing",g.decide(sample(),now:0),.none) }
 
@@ -106,6 +113,80 @@ do {
 }
 
 do { let g=PlaybackGovernor(); check("an unknown offset does nothing",g.decide(sample(ahead:nil,behind:nil),now:1600),.none) }
+
+// ---- the cushion ----
+
+do {
+	let g=PlaybackGovernor()
+	check("no claim before the ladder has settled",g.cushion(sample(),offset:18,now:2000),.unchanged)
+	check("nor a moment too early",g.cushion(sample(),offset:18,now:2003),.unchanged)
+	check("then the window less the headroom",g.cushion(sample(),offset:18,now:2004),.claim(seconds:12))
+	check("and it is not restated every tick",g.cushion(sample(bitrate:3_000_000),offset:18,now:2005),.unchanged)
+	check("the claim is remembered",g.cushionClaim == 12)
+}
+
+// The build 12 disaster, prevented at the source: a feed publishing a window
+// too shallow to stand 18s back gets a small offset from applyLiveOffset, and
+// must never be asked to prefetch more than that window can hold.
+do {
+	let g=PlaybackGovernor()
+	_=g.cushion(sample(),offset:12,now:2100)
+	check("a 12s offset leaves too little to claim",g.cushion(sample(),offset:12,now:2110),.unchanged)
+	check("so nothing is claimed at all",g.cushionClaim == nil)
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.cushion(sample(),offset:0,now:2200)
+	check("an unmeasured window is never claimed against",g.cushion(sample(),offset:0,now:2210),.unchanged)
+}
+
+do {
+	let g=PlaybackGovernor()
+	check("nothing is claimed before the first frame",g.cushion(sample(started:false),offset:18,now:2300),.unchanged)
+	check("nor while the viewer has paused",g.cushion(sample(viewerPaused:true),offset:18,now:2320),.unchanged)
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.cushion(sample(),offset:18,now:2400)
+	_=g.cushion(sample(),offset:18,now:2410)
+	check("the claim stands",g.cushionClaim == 12)
+	check("a brief dip is not a collapse",g.cushion(sample(bitrate:400_000),offset:18,now:2411),.unchanged)
+	check("a recovery clears the suspicion",g.cushion(sample(bitrate:3_000_000),offset:18,now:2413),.unchanged)
+	check("so a later dip starts over",g.cushion(sample(bitrate:400_000),offset:18,now:2414),.unchanged)
+	check("and is still not a collapse",g.cushion(sample(bitrate:400_000),offset:18,now:2419),.unchanged)
+	check("the claim survived",g.cushionClaim == 12)
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.cushion(sample(),offset:18,now:2500)
+	_=g.cushion(sample(),offset:18,now:2510)
+	_=g.cushion(sample(bitrate:400_000),offset:18,now:2511)
+	check("a sustained collapse withdraws the claim",g.cushion(sample(bitrate:400_000),offset:18,now:2518),.withdraw)
+	check("and it is given up for good",g.cushionAbandoned)
+	check("a healthy rung does not win it back",g.cushion(sample(bitrate:3_000_000),offset:18,now:2600),.unchanged)
+	check("nothing is claimed again",g.cushionClaim == nil)
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.cushion(sample(),offset:18,now:2700)
+	_=g.cushion(sample(),offset:18,now:2710)
+	check("an unknown bitrate is not evidence",g.cushion(sample(bitrate:nil),offset:18,now:2711),.unchanged)
+	check("and the claim is kept",g.cushionClaim == 12)
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.cushion(sample(),offset:18,now:2800)
+	_=g.cushion(sample(),offset:18,now:2810)
+	g.reset()
+	check("a new item starts with no claim",g.cushionClaim == nil)
+	check("and has to settle again",g.cushion(sample(),offset:18,now:2811),.unchanged)
+	check("then claims afresh",g.cushion(sample(),offset:18,now:2816),.claim(seconds:12))
+}
 
 print("")
 if failures == 0 { print("all checks passed"); exit(0) }

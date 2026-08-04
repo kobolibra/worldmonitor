@@ -82,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	private var startedAt = Date()
 	private var failures = 0
 	private var sentTracks = false
+	/// Whether play() has been asked for on this item yet. The first one is
+	/// deliberately deferred - see beginPlayback.
+	private var startRequested = false
 
 	// MARK: The ladder
 	//
@@ -97,8 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
 	// MARK: Buffering
 	//
-	// Left to AVFoundation, deliberately, and this is the second time that has
-	// had to be learned.
+	// Mostly left to AVFoundation, and this is the second time that has had to
+	// be learned.
 	//
 	// This app was measured smooth on exactly one configuration - several Mbps,
 	// a few seconds buffered, under ten seconds behind live - and that
@@ -112,30 +115,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	//
 	//   build 12  restored the offset but also set
 	//             preferredForwardBufferDuration to 24s. That reads like "be
-	//             more resilient" and behaves like "prefer whichever rung fills
-	//             fastest", because a standing forward-buffer requirement is a
-	//             promise the adaptive logic has to keep and the bottom rung
-	//             keeps it most cheaply: 24.3s buffered, still 400 kbps.
+	//             more resilient" and behaved like "prefer whichever rung fills
+	//             fastest": 24.3s buffered, still 400 kbps.
 	//
-	// The pattern in both is the same. Each knob was read as a statement about
-	// safety and is really a statement about which rung to prefer. The framework
-	// balances these against each other with far more information than this
-	// process has - it can see segment timings, it cannot be told about them.
+	// The note here used to conclude that such a knob is always a statement
+	// about which rung to prefer rather than about safety. That was half right,
+	// and the missing half is arithmetic. Build 12 asked for 24 seconds of
+	// forward buffer while the playhead stands 18 seconds behind the live edge.
+	// There are never 24 seconds of media between a playhead and an edge only 18
+	// seconds away, so the requirement could not be met at any bitrate - and a
+	// requirement that cannot be met is approached most cheaply by the bottom
+	// rung, permanently. A claim strictly inside the window is satisfiable, and
+	// once satisfied the adaptive logic is free again.
 	//
-	// So the only thing set is where to stand relative to the live edge, which
-	// is a genuine editorial choice and not a performance hint - and even that,
-	// as applyLiveOffset explains, only as deep as the feed can carry.
+	// That matters because the other two paths both keep a real cushion and this
+	// one did not. Android asks DefaultLoadControl for 20s, the web path asks
+	// hls.js for up to 40s, and this path asked for nothing and was measured
+	// holding 2s - which is precisely why a jitter spike a television rides
+	// straight through shows up as a stall on the desktop. So the cushion is now
+	// claimed, from PlaybackGovernor.cushion: the measured offset less headroom,
+	// after the ladder has settled, never against a window too shallow to carry
+	// one, and withdrawn for the session if the ladder collapses under it.
 	//
-	// What the framework does not offer at all is the pair of things the Android
-	// build has always had: a cushion that applies only after a starve, and a
-	// ceiling on the rate used to recover the offset. Neither is a hint about
-	// which rung to prefer, which is exactly why neither could be expressed as
-	// one of the knobs above. They live in Playback.swift and are applied on the
-	// same one second tick the rail already runs on.
+	// The other pair of things the framework does not offer at all - a cushion
+	// that applies only after a starve, and a ceiling on the rate used to
+	// recover the offset - are what the Android build has always had. They live
+	// in Playback.swift too, and are applied on the same tick.
 
 	/// Decides, per tick, whether to hold through a starve, whether to run
-	/// slightly fast to recover the live offset, and whether a pinned rung has
-	/// stopped being worth its pin.
+	/// slightly fast to recover the live offset, how much to prefetch, and
+	/// whether a pinned rung has stopped being worth its pin.
 	private let governor = PlaybackGovernor()
 
 	/// Paused by the viewer, as opposed to paused by the governor while the
@@ -159,6 +168,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	private let startupDeadline = 20.0
 	/// A feed that has produced nothing by now is worth one intervention first.
 	private let rescueAfter = 6.0
+	/// How long to wait for a live window before starting without one.
+	private let startupGrace = 1.5
+	/// Startup is polled far faster than the rail, because both things that
+	/// happen during it - placing the playhead, noticing the first frame - are
+	/// things a viewer sees the delay of.
+	private let startupPollInterval = 0.1
+	private let telemetryInterval = 1.0
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		buildMenuBar()
@@ -329,6 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		everPlayed = false
 		startedAt = Date()
 		userPaused = false
+		startRequested = false
 		appliedOffset = 0
 		rescuedStartup = false
 		governor.reset()
@@ -358,9 +375,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		// pitch, and is the algorithm meant for speech.
 		playerItem.audioTimePitchAlgorithm = .spectral
 
-		// preferredForwardBufferDuration is deliberately not set here. See the
-		// buffering note above: it does not mean "be safer", it means "prefer the
-		// rung that fills fastest", and it pinned this feed to 400 kbps.
+		// preferredForwardBufferDuration is deliberately not set here either. It
+		// is claimed later, from the governor, once there is a measured window to
+		// size it against - see the buffering note above. Stating it now, while
+		// the throughput estimate is still forming and the window is still
+		// unknown, is half of what went wrong in build 12.
 
 		// If a height was picked but this playlist is the master - because the
 		// ladder has not been read yet - a ceiling is at least better than
@@ -408,8 +427,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		applyRect()
 
 		send(["t": "loading", "msg": "\u{6b63}\u{5728}\u{8fde}\u{63a5} Bloomberg \u{76f4}\u{64ad}\u{2026}"])
-		p.play()
-		startStats()
+		// play() is not called here. The playhead has to be placed first, or the
+		// picture starts wherever the framework chose and is then moved - see
+		// beginPlayback. The poll below is what does it, ten times a second.
+		startStats(interval: startupPollInterval)
 	}
 
 	private func releasePlayer() {
@@ -421,6 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		item = nil
 		videoView?.isHidden = true
 		userPaused = false
+		startRequested = false
 		governor.reset()
 	}
 
@@ -440,11 +462,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		if governor.holding {
 			governor.releaseHold()
 			userPaused = false
+			startRequested = true
 			p.play()
 			return
 		}
 		if userPaused || p.rate == 0 {
 			userPaused = false
+			startRequested = true
 			p.play()
 			return
 		}
@@ -456,6 +480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		guard let it = item, let end = it.seekableTimeRanges.last?.timeRangeValue.end else { return }
 		governor.releaseHold()
 		userPaused = false
+		startRequested = true
 		player?.seek(to: end, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
 		player?.play()
 	}
@@ -485,6 +510,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// better guess than any constant chosen here. The governor's catch-up
 	/// target follows the same number down, or it would spend the whole session
 	/// trying to recover an offset that does not exist.
+	///
+	/// It is also applied before the first play(), not after it. Writing this
+	/// property onto an item that is already presenting frames moves the
+	/// playhead by the whole offset and refills the buffer from nothing, which
+	/// is a hitch on every single start; the web and Android paths both take
+	/// their offset before playback begins, and now so does this one.
 	private func applyLiveOffset(_ it: AVPlayerItem) {
 		guard appliedOffset == 0,
 			let range = it.seekableTimeRanges.last?.timeRangeValue
@@ -503,6 +534,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		it.configuredTimeOffsetFromLive = CMTime(seconds: offset, preferredTimescale: 600)
 	}
 
+	/// Start, once there is somewhere to start from.
+	///
+	/// The wait is for applyLiveOffset to have had a window to measure, because
+	/// the whole point of deferring is that the first frame presented should
+	/// already be at the offset. A feed that will not produce a seekable range
+	/// promptly is not made better by waiting for one, so after the grace period
+	/// this starts anyway and the framework's own default offset applies.
+	private func beginPlayback(_ p: AVPlayer, _ it: AVPlayerItem) {
+		guard !startRequested, it.status == .readyToPlay else { return }
+		if appliedOffset == 0, Date().timeIntervalSince(startedAt) < startupGrace { return }
+		startRequested = true
+		p.play()
+	}
+
 	/// A player that is downloading but has never presented a frame.
 	///
 	/// The one cause of that which is recoverable from here is a playhead
@@ -518,6 +563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		else { return }
 		rescuedStartup = true
 		appliedOffset = -1
+		startRequested = true
 		it.configuredTimeOffsetFromLive = .invalid
 		p.seek(
 			to: end,
@@ -744,10 +790,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	// later. It is also where the governor is asked what to do, on the same
 	// figures the rail is about to show, so what a viewer sees and what the app
 	// acted on cannot disagree.
+	//
+	// The interval is not constant. Startup runs at startupPollInterval, because
+	// placing the playhead and noticing the first frame are both things a viewer
+	// sees the delay of; everything after that is a one second rail.
 
-	private func startStats() {
+	private func startStats(interval: Double) {
 		stopStats()
-		let t = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+		let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
 			self?.tick()
 		}
 		RunLoop.main.add(t, forMode: .common)
@@ -772,10 +822,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		}
 
 		// Where to stand is decided from the window, so it cannot be decided
-		// before there is one - and a first frame that never arrives is worth one
-		// intervention before the deadline above takes the native path away.
+		// before there is one - and the first play() waits on that decision,
+		// because moving the playhead afterwards is a hitch on every start. A
+		// first frame that never arrives is still worth one intervention before
+		// the deadline above takes the native path away.
 		if !everPlayed {
 			applyLiveOffset(it)
+			beginPlayback(p, it)
 			rescueStartup(p, it)
 		}
 
@@ -784,6 +837,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			everPlayed = true
 			failures = 0
 			send(["t": "playing"])
+			// Nothing after startup needs ten ticks a second.
+			startStats(interval: telemetryInterval)
 		}
 
 		// Both figures are wanted twice over - the rail shows them, the governor
@@ -800,17 +855,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			if v.isFinite { behind = max(0, v) }
 		}
 
+		// Wanted twice over as well: the rail reports it, and the cushion policy
+		// uses it as the one signal that a standing buffer claim has cost us the
+		// ladder.
+		var bitrate: Double?
+		if let event = it.accessLog()?.events.last {
+			let bps = event.indicatedBitrate > 0 ? event.indicatedBitrate : event.observedBitrate
+			if bps > 0 { bitrate = bps }
+		}
+
+		let stamp = Date().timeIntervalSinceReferenceDate
+		let sample = PlaybackSample(
+			bufferedAhead: ahead,
+			behindLive: behind,
+			bufferEmpty: it.isPlaybackBufferEmpty,
+			likelyToKeepUp: it.isPlaybackLikelyToKeepUp,
+			rate: Double(p.rate),
+			started: everPlayed,
+			viewerPaused: userPaused,
+			pinned: pinnedHeight != 0,
+			canDropPin: masterURL != nil,
+			bitrate: bitrate)
+
 		// A dropped pin reopens the player, which means the item this tick was
 		// reading is gone and the stats about to be sent describe nothing.
-		if govern(p, it, ahead: ahead, behind: behind) { return }
+		if govern(p, sample: sample, now: stamp) { return }
+		applyCushion(it, sample: sample, now: stamp)
 
 		var payload: [String: Any] = ["t": "stats"]
 		if let ahead = ahead { payload["buf"] = ahead }
 		if let behind = behind { payload["lat"] = behind }
-		if let event = it.accessLog()?.events.last {
-			let bps = event.indicatedBitrate > 0 ? event.indicatedBitrate : event.observedBitrate
-			if bps > 0 { payload["bps"] = Int(bps) }
-		}
+		if let bitrate = bitrate { payload["bps"] = Int(bitrate) }
 		if size.width > 0 {
 			payload["w"] = Int(size.width)
 			payload["h"] = Int(size.height)
@@ -827,19 +902,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	///
 	/// Returns true when the player was replaced, in which case the caller must
 	/// stop: everything it has read describes an item that is no longer current.
-	private func govern(_ p: AVPlayer, _ it: AVPlayerItem, ahead: Double?, behind: Double?) -> Bool {
-		let sample = PlaybackSample(
-			bufferedAhead: ahead,
-			behindLive: behind,
-			bufferEmpty: it.isPlaybackBufferEmpty,
-			likelyToKeepUp: it.isPlaybackLikelyToKeepUp,
-			rate: Double(p.rate),
-			started: everPlayed,
-			viewerPaused: userPaused,
-			pinned: pinnedHeight != 0,
-			canDropPin: masterURL != nil)
-
-		switch governor.decide(sample, now: Date().timeIntervalSinceReferenceDate) {
+	private func govern(_ p: AVPlayer, sample: PlaybackSample, now: Double) -> Bool {
+		switch governor.decide(sample, now: now) {
 		case .none:
 			return false
 
@@ -872,6 +936,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		case .dropPin:
 			degradeFromPin()
 			return true
+		}
+	}
+
+	/// How much to prefetch.
+	///
+	/// The offset handed over is the one actually in force, never the target: a
+	/// feed whose window is too shallow to stand back in gets appliedOffset -1
+	/// from applyLiveOffset, and a claim made against a window that cannot hold
+	/// it is exactly the unsatisfiable requirement that pinned build 12 to the
+	/// bottom rung. Zero here means "no basis yet", and the governor declines.
+	private func applyCushion(_ it: AVPlayerItem, sample: PlaybackSample, now: Double) {
+		switch governor.cushion(sample, offset: appliedOffset > 0 ? appliedOffset : 0, now: now) {
+		case .unchanged:
+			break
+		case .claim(let seconds):
+			it.preferredForwardBufferDuration = seconds
+		case .withdraw:
+			// Back to the framework's own judgement, which is what this path ran
+			// on before the claim existed.
+			it.preferredForwardBufferDuration = 0
 		}
 	}
 
