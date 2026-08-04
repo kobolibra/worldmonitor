@@ -9,6 +9,10 @@ func check(_ label: String, _ actual: CushionDecision, _ expected: CushionDecisi
 	if actual == expected { print("ok    \(label)") }
 	else { print("FAIL  \(label): expected \(expected), got \(actual)"); failures += 1 }
 }
+func check(_ label: String, _ actual: StationDecision, _ expected: StationDecision) {
+	if actual == expected { print("ok    \(label)") }
+	else { print("FAIL  \(label): expected \(expected), got \(actual)"); failures += 1 }
+}
 func check(_ label: String, _ passed: Bool) {
 	if passed { print("ok    \(label)") }
 	else { print("FAIL  \(label)"); failures += 1 }
@@ -25,7 +29,8 @@ func sample(ahead: Double? = 10, behind: Double? = 18, empty: Bool = false,
 
 let tuning = PlaybackTuning()
 print("target \(tuning.targetOffset)s, resume cushion \(tuning.rebufferCushion)s, catch-up \(tuning.catchUpRate)x")
-print("cushion \(tuning.targetOffset - tuning.cushionHeadroom)s after \(tuning.cushionSettleDelay)s, floor \(tuning.cushionBitrateFloor)\n")
+print("cushion \(tuning.targetOffset - tuning.cushionHeadroom)s after \(tuning.cushionSettleDelay)s, floor \(tuning.cushionBitrateFloor)")
+print("station: under \(tuning.stationFloor)s behind for \(tuning.stationEvidence)s, cooldown \(tuning.stationCooldown)s\n")
 
 do { let g=PlaybackGovernor(); check("a healthy tick changes nothing",g.decide(sample(),now:0),.none) }
 
@@ -186,6 +191,108 @@ do {
 	check("a new item starts with no claim",g.cushionClaim == nil)
 	check("and has to settle again",g.cushion(sample(),offset:18,now:2811),.unchanged)
 	check("then claims afresh",g.cushion(sample(),offset:18,now:2816),.claim(seconds:12))
+}
+
+// ---- station keeping ----
+
+do {
+	let g=PlaybackGovernor()
+	check("standing 18s back is exactly right",g.station(sample(behind:18),window:30,applied:18,now:3000),.unchanged)
+	check("and 8s back is still not the edge",g.station(sample(behind:8),window:30,applied:18,now:3001),.unchanged)
+}
+
+// The build 31 report, verbatim: 600 kbps, 6.9s buffered, 0.0s behind live.
+// Nothing was in force because the window was not measurable when the first
+// frame arrived, and before station keeping that was permanent for the whole
+// session - which is why the ladder was on the floor.
+do {
+	let g=PlaybackGovernor()
+	let s=sample(ahead:6.9,behind:0,bitrate:600_000)
+	check("riding the edge is noticed but not acted on at once",g.station(s,window:30,applied:0,now:3100),.unchanged)
+	check("nor a moment too early",g.station(s,window:30,applied:0,now:3104),.unchanged)
+	check("then the offset is put back",g.station(s,window:30,applied:0,now:3105),.place(offset:18))
+	check("and remembered",g.stationOffset == 18)
+}
+
+// An offset is in force and the playhead is on the edge regardless, so writing
+// it again is not enough - it has to be seeked back.
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0.5)
+	check("an ignored offset waits for evidence too",g.station(s,window:30,applied:18,now:3200),.unchanged)
+	check("and then the playhead is moved",g.station(s,window:30,applied:18,now:3206),.restore(offset:18))
+}
+
+// After rescueStartup has cleared the offset and jumped to the edge to get a
+// first frame out of a stubborn feed, station keeping is what walks it back.
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0)
+	_=g.station(s,window:30,applied:-1,now:3300)
+	check("a rescued item does not stay on the edge",g.station(s,window:30,applied:-1,now:3306),.place(offset:18))
+}
+
+// A window that cannot hold the full target still gets what it can hold.
+do {
+	let g=PlaybackGovernor()
+	_=g.station(sample(behind:0),window:20,applied:0,now:3400)
+	check("a 20s window gives up 6s of headroom",g.station(sample(behind:0),window:20,applied:0,now:3406),.place(offset:14))
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.station(sample(behind:0),window:8,applied:0,now:3500)
+	check("an 8s window has nowhere to stand back in",g.station(sample(behind:0),window:8,applied:0,now:3520),.unchanged)
+	check("so nothing is asserted",g.stationOffset == nil)
+	check("an unmeasurable window is left alone",g.station(sample(behind:0),window:nil,applied:0,now:3521),.unchanged)
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.station(sample(behind:0,started:false),window:30,applied:0,now:3600)
+	check("before the first frame this is the startup path's job",g.station(sample(behind:0,started:false),window:30,applied:0,now:3620),.unchanged)
+	_=g.station(sample(behind:0,viewerPaused:true),window:30,applied:0,now:3630)
+	check("a paused viewer is never seeked",g.station(sample(behind:0,viewerPaused:true),window:30,applied:0,now:3650),.unchanged)
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.station(sample(behind:nil),window:30,applied:18,now:3700)
+	check("an unmeasurable distance is not evidence",g.station(sample(behind:nil),window:30,applied:18,now:3720),.unchanged)
+}
+
+// Evidence has to be continuous. A dip to the edge that recovers on its own is
+// not worth a rebuffer.
+do {
+	let g=PlaybackGovernor()
+	_=g.station(sample(behind:1),window:30,applied:18,now:3800)
+	_=g.station(sample(behind:1),window:30,applied:18,now:3802)
+	check("a recovery clears the evidence",g.station(sample(behind:17),window:30,applied:18,now:3803),.unchanged)
+	_=g.station(sample(behind:1),window:30,applied:18,now:3804)
+	check("so the clock starts over",g.station(sample(behind:1),window:30,applied:18,now:3806),.unchanged)
+	check("and only then is it moved",g.station(sample(behind:1),window:30,applied:18,now:3810),.restore(offset:18))
+}
+
+// Every correction costs a refill, so they are rate limited.
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0)
+	_=g.station(s,window:30,applied:18,now:3900)
+	check("the first correction happens",g.station(s,window:30,applied:18,now:3906),.restore(offset:18))
+	check("a second one is not attempted straight away",g.station(s,window:30,applied:18,now:3920),.unchanged)
+	check("nor a moment before the cooldown is up",g.station(s,window:30,applied:18,now:3950),.unchanged)
+	check("but the feed is not abandoned either",g.station(s,window:30,applied:18,now:3952),.restore(offset:18))
+}
+
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0)
+	_=g.station(s,window:30,applied:18,now:4000)
+	_=g.station(s,window:30,applied:18,now:4006)
+	g.reset()
+	check("a new item forgets the correction",g.stationOffset == nil)
+	_=g.station(s,window:30,applied:18,now:4007)
+	check("and is not held back by the old cooldown",g.station(s,window:30,applied:18,now:4013),.restore(offset:18))
 }
 
 print("")
