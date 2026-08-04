@@ -519,7 +519,7 @@
     <span class="sep-dot m-hide" aria-hidden="true"></span>
     <span class="m-hide" id="statBuf" title="当前已缓冲的可播放时长。这个数字接近 0 就会卡顿">缓冲 —</span>
     <span class="sep-dot" aria-hidden="true"></span>
-    <span id="statLat" title="当前画面距离直播边缘的真实时间差">延迟 —</span>
+    <span id="statLat" title="当前画面距离直播边缘的时间差">延迟 —</span>
     <span class="spacer"></span>
     <span class="keys">
       <span><kbd>空格</kbd>播放</span><span><kbd>M</kbd>静音</span><span><kbd>F</kbd>全屏</span><span><kbd>L</kbd>回到直播</span><span><kbd>S</kbd>切换信号源</span>
@@ -530,8 +530,13 @@
 <noscript><div class="noscript">该页面需要启用 JavaScript 才能播放直播流。</div></noscript>
 
 <!-- Order matters: the bridge has to exist before app.js decides who owns the
-     picture. Both are deferred, and deferred scripts run in document order. -->
-<script src="native.js?v=1" defer></script>
+     picture. Both are deferred, and deferred scripts run in document order.
+
+     The query string is a cache key, not decoration. A shell that has already
+     cached one of these files is entitled to keep serving it, so replacing the
+     file alone does not reach a client that has been running for weeks - bump
+     the number whenever the file behind it changes. -->
+<script src="native.js?v=2" defer></script>
 <script src="app.js?v=30" defer></script>
 </body>
 </html>
