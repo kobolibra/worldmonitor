@@ -83,7 +83,7 @@
     muted=!!d.muted;paused=!!d.paused;api.screen.classList.toggle("mutedState",muted);
     api.statRate.textContent=d.bps?"码率 "+rate(d.bps):"码率 —";
     var buf=typeof d.buf==="number"&&isFinite(d.buf)?d.buf:NaN;api.statBuf.textContent=isFinite(buf)?"缓冲 "+buf.toFixed(1)+"s":"缓冲 —";api.statBuf.classList.toggle("thin",isFinite(buf)&&buf<4);
-    latency=typeof d.lat==="number"&&isFinite(d.lat)?d.lat:NaN;api.statLat.textContent=isFinite(latency)?"边缘差 "+latency.toFixed(1)+"s":"延迟 —";api.statLat.title="画面落后播放列表已发布直播边缘的时间；这不是摄像机到屏幕的完整端到端延迟";
+    latency=typeof d.lat==="number"&&isFinite(d.lat)?d.lat:NaN;api.statLat.textContent=isFinite(latency)?"延迟 "+latency.toFixed(1)+"s":"延迟 —";api.statLat.title="当前画面距离直播边缘的时间差";
     var behind=isFinite(latency)&&latency>BEHIND_LAT;api.liveBtn.classList.toggle("behind",behind);api.liveTxt.textContent=behind?"回到直播":"LIVE";api.qRes.textContent=d.h?(d.w||"?")+"×"+d.h:"—";sync();
   }
 
