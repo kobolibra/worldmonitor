@@ -838,12 +838,38 @@
         maxBufferHole: 0.5,
         nudgeMaxRetry: 10,
 
-        /* ABR biased towards holding a picture rather than maximising one:
-           start low, demand real headroom before climbing. An explicit pick
-           still overrides all of it. */
-        abrEwmaDefaultEstimate: 600000,
+        /* ---- The adaptive ladder ----
+
+           These two lines held a Mac session at 637 kbps while a browser tab
+           on the same machine and the same line ran at 3.2 Mbps, and while the
+           Android build never dropped below its top rungs at all.
+
+           The estimate below is only a guess, but it is the guess the very
+           first rung is chosen from, and it was 600 kbps - so every session
+           opened by assuming a 600 kbps line and picking the bottom rung to
+           match. The reported figure was not near that number by coincidence;
+           it was that number.
+
+           The up factor is what then kept it there. A rung is only climbed to
+           when its bitrate fits inside estimate * upFactor, so 0.5 demanded
+           two times headroom for every step up. On a line with jitter - a VPN,
+           in practice - the fast EWMA is dragged below that often enough that
+           the climb never happens, and a session that started at the bottom
+           stays at the bottom for as long as it runs. hls.js itself ships 0.7.
+
+           ExoPlayer does not have this problem on the same network because its
+           bandwidth meter starts from a persisted estimate seeded by network
+           type rather than a hardcoded number, which is why the Android build
+           picks a high rung within seconds.
+
+           Starting at 2 Mbps costs one early down-switch on a line that really
+           is slow, which is over in seconds. Starting at 600 kbps cost the
+           whole session. Falling back stays quick: the down factor is
+           untouched, and a collapsing rung is abandoned on the first evidence,
+           not the second. */
+        abrEwmaDefaultEstimate: 2000000,
         abrBandWidthFactor: 0.8,
-        abrBandWidthUpFactor: 0.5,
+        abrBandWidthUpFactor: 0.7,
         startFragPrefetch: true,
 
         /* Retry a slow segment rather than tearing the session down. */
@@ -1046,6 +1072,13 @@
      which is exactly how a sixty second target went unnoticed. The tooltip
      carries the target, the measured segment length and the playback rate.
 
+     The rate tooltip carries the ladder's own bandwidth estimate beside the
+     measured encoded rate, because those two numbers fail in different ways
+     and the difference is not visible from the picture. A low estimate means
+     the line, or a guess that never recovered; a healthy estimate under a low
+     rung means the ladder is refusing to climb. Reading both is what ended a
+     run of changes aimed at the wrong one.
+
      While a native player owns the picture the video element is hidden, so
      this loop stops and native.js fills the same rail from the shell's own
      figures. */
@@ -1058,6 +1091,14 @@
       ? ("\u7801\u7387 " + (bps >= 1000000 ? (Math.round(bps / 100000) / 10 + " Mbps")
                                           : (Math.round(bps / 1000).toLocaleString() + " kbps")))
       : "\u7801\u7387 \u2014";
+
+    var est = (hls && typeof hls.bandwidthEstimate === "number" && hls.bandwidthEstimate > 0)
+      ? hls.bandwidthEstimate : 0;
+    var rateTip = "\u6839\u636e\u6700\u8fd1\u51e0\u4e2a\u5df2\u7f13\u51b2\u5206\u7247\u5b9e\u6d4b\u7684\u5e73\u5747\u7f16\u7801\u7801\u7387";
+    if(est) rateTip += "\n\u5e26\u5bbd\u4f30\u8ba1 " + rateLabel(est);
+    if(lv) rateTip += "\n\u5f53\u524d\u6863\u4f4d " + levelLabel(lv);
+    if(hls && hls.levels && hls.levels.length) rateTip += "\n\u5171 " + hls.levels.length + " \u6863";
+    statRate.title = rateTip;
 
     var buf = bufferAhead();
     statBuf.textContent = isFinite(buf) ? ("\u7f13\u51b2 " + buf.toFixed(1) + "s") : "\u7f13\u51b2 \u2014";
