@@ -3,8 +3,18 @@ name: macOS app
 # Narrow on purpose, exactly like the Android workflow: only a push to the
 # apps branch that touches the macOS project, or a manual dispatch. Editing
 # the website on gh-pages can never trigger this.
+#
+# Pull requests against apps build too, but publish nothing. Compiling only
+# after a merge meant a change could not be checked before it landed, and a
+# broken build showed up as a release that never appeared rather than as a
+# message saying what was wrong.
 on:
   push:
+    branches: [apps]
+    paths:
+      - 'macos/**'
+      - '.github/workflows/macos.yml'
+  pull_request:
     branches: [apps]
     paths:
       - 'macos/**'
@@ -13,9 +23,13 @@ on:
 
 permissions:
   contents: write
+  # For the report a pull request build posts back on itself.
+  pull-requests: write
 
 concurrency:
-  group: macos-app
+  # Per ref, so a pull request build and a build of apps do not cancel each
+  # other.
+  group: macos-app-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,9 +46,27 @@ jobs:
           swiftc --version
 
       - name: Build the app bundle
-        run: bash macos/build.sh
+        run: |
+          set -o pipefail
+          bash macos/build.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # The governor decides when to hold through a starve, when to run at 1.1
+      # to recover the live offset, and when a pinned rung has stopped being
+      # worth its pin. It holds no AppKit or AVFoundation types precisely so
+      # that those decisions can be checked here, against a synthetic trace,
+      # rather than by watching a stream and forming an impression of it.
+      #
+      # Runs even when the build failed, since it needs only one source file.
+      - name: Self-test the playback governor
+        if: always()
+        run: |
+          set -o pipefail
+          swiftc -O macos/Sources/Playback.swift macos/tests/main.swift \
+            -o "$RUNNER_TEMP/governor-tests" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          "$RUNNER_TEMP/governor-tests" 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
 
       - name: Zip it
+        if: github.event_name != 'pull_request'
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "macos/build/Bloomberg Live.app" \
@@ -42,13 +74,17 @@ jobs:
           ls -lh BloombergLive-macOS.zip
 
       - name: Upload as a workflow artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: bloomberg-live-macos
           path: BloombergLive-macOS.zip
           if-no-files-found: error
 
+      # Nothing is published from a pull request: a release per proposal would
+      # be noise, and the tag is the run number.
       - name: Publish a release
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mac-${{ github.run_number }}
@@ -74,3 +110,31 @@ jobs:
           files: BloombergLive-macOS.zip
           draft: false
           prerelease: false
+
+      # What the runner saw, back on the pull request, so a compiler error or a
+      # failed check can be read without opening the log.
+      - name: Report back on the pull request
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### macOS build report: ${{ job.status }}"
+            echo
+            echo "Runner: macos-14. Swift: $(swiftc --version | head -n 1)"
+            echo
+            echo "#### Playback governor self-test"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/tests.log" 2>/dev/null || echo "(did not run)"
+            echo '```'
+            echo
+            echo "#### Build, last 80 lines"
+            echo
+            echo '```'
+            tail -n 80 "$RUNNER_TEMP/build.log" 2>/dev/null || echo "(did not run)"
+            echo '```'
+          } > "$RUNNER_TEMP/report.md"
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file "$RUNNER_TEMP/report.md"
