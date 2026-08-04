@@ -123,7 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	// process has - it can see segment timings, it cannot be told about them.
 	//
 	// So the only thing set is where to stand relative to the live edge, which
-	// is a genuine editorial choice and not a performance hint.
+	// is a genuine editorial choice and not a performance hint - and even that,
+	// as applyLiveOffset explains, only as deep as the feed can carry.
 	//
 	// What the framework does not offer at all is the pair of things the Android
 	// build has always had: a cushion that applies only after a starve, and a
@@ -142,12 +143,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// itself, a viewer's pause does not, and rate == 0 cannot tell them apart.
 	private var userPaused = false
 
-	/// How far behind the live edge to sit. Matches liveSyncDuration in the web
-	/// player's hls.js configuration and TARGET_OFFSET_MS on Android, so all
-	/// three paths feel alike. Kept in one place, in the tuning.
+	/// The offset actually asked of this item, in seconds. Zero means the window
+	/// has not been measured yet; -1 means it was measured and no offset is
+	/// being imposed at all.
+	private var appliedOffset = 0.0
+	/// Whether the startup rescue below has already been spent on this item.
+	private var rescuedStartup = false
+
+	/// How far behind the live edge to sit, when the feed has room for it.
+	/// Matches liveSyncDuration in the web player's hls.js configuration and
+	/// TARGET_OFFSET_MS on Android, so all three paths feel alike. Kept in one
+	/// place, in the tuning.
 	private var targetOffset: Double { governor.tuning.targetOffset }
 	/// A feed that has produced nothing at all by now is not going to.
 	private let startupDeadline = 20.0
+	/// A feed that has produced nothing by now is worth one intervention first.
+	private let rescueAfter = 6.0
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		buildMenuBar()
@@ -318,7 +329,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		everPlayed = false
 		startedAt = Date()
 		userPaused = false
+		appliedOffset = 0
+		rescuedStartup = false
 		governor.reset()
+		governor.tuning.targetOffset = PlaybackTuning().targetOffset
 
 		let asset = AVURLAsset(url: u)
 		let playerItem = AVPlayerItem(asset: asset)
@@ -332,8 +346,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		// this the player drifts up to the live edge and stays there, with
 		// nothing ahead of it to hold and nothing to prefetch into.
 		playerItem.automaticallyPreservesTimeOffsetFromLive = true
-		playerItem.configuredTimeOffsetFromLive =
-			CMTime(seconds: targetOffset, preferredTimescale: 600)
+		// How deep an offset, though, is not decided here: it cannot be, because
+		// nothing about the feed's window is known yet. See applyLiveOffset. Until
+		// then configuredTimeOffsetFromLive is left invalid, which is its default
+		// and means the framework picks - conservatively, from the target duration
+		// it has just read.
 
 		// Both the framework's own recovery above and the governor's catch-up
 		// below get the time back by playing slightly fast, and the default
@@ -441,6 +458,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		userPaused = false
 		player?.seek(to: end, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
 		player?.play()
+	}
+
+	// MARK: - Where to stand
+
+	/// Ask for the editorial offset, but never for more of it than this feed
+	/// publishes.
+	///
+	/// This is where the Mac and the television genuinely diverged, and it is
+	/// not a matter of degree. Both aim for the same 18 seconds behind the edge,
+	/// but ExoPlayer treats a target offset as a preference and clamps it to the
+	/// window the manifest actually carries, while configuredTimeOffsetFromLive
+	/// is taken literally. Ask for eighteen seconds of a feed that publishes six
+	/// and the playhead is parked at - or behind - the oldest segment in the
+	/// window, which is the one about to be removed. Every segment then expires
+	/// underneath the playhead before it can be presented. What that looks like
+	/// from outside is a player that downloads continuously, holds a second or
+	/// two, never leaves the bottom rung and never produces a frame: connecting,
+	/// forever, on a URL that plays perfectly on a television.
+	///
+	/// So the offset is applied once, after the window has been measured, and
+	/// only as deep as the window can carry - six seconds are kept in hand
+	/// because the oldest segment is always on its way out. A window with no
+	/// room for an editorial offset at all gets none: the framework's own
+	/// default, which is derived from the target duration it has just read, is a
+	/// better guess than any constant chosen here. The governor's catch-up
+	/// target follows the same number down, or it would spend the whole session
+	/// trying to recover an offset that does not exist.
+	private func applyLiveOffset(_ it: AVPlayerItem) {
+		guard appliedOffset == 0,
+			let range = it.seekableTimeRanges.last?.timeRangeValue
+		else { return }
+		let window = CMTimeGetSeconds(range.duration)
+		guard window.isFinite, window > 0 else { return }
+
+		let offset = min(targetOffset, window - 6)
+		if offset < 4 {
+			appliedOffset = -1
+			governor.tuning.targetOffset = max(2, window / 2)
+			return
+		}
+		appliedOffset = offset
+		governor.tuning.targetOffset = offset
+		it.configuredTimeOffsetFromLive = CMTime(seconds: offset, preferredTimescale: 600)
+	}
+
+	/// A player that is downloading but has never presented a frame.
+	///
+	/// The one cause of that which is recoverable from here is a playhead
+	/// standing outside the live window, so the offset comes off and the picture
+	/// jumps to the edge once - the same thing the page's LIVE button asks for.
+	/// Spent at most once per item, and well before the startup deadline, since
+	/// letting that expire costs the whole native path for the session.
+	private func rescueStartup(_ p: AVPlayer, _ it: AVPlayerItem) {
+		guard !rescuedStartup,
+			it.status == .readyToPlay,
+			Date().timeIntervalSince(startedAt) > rescueAfter,
+			let end = it.seekableTimeRanges.last?.timeRangeValue.end
+		else { return }
+		rescuedStartup = true
+		appliedOffset = -1
+		it.configuredTimeOffsetFromLive = .invalid
+		p.seek(
+			to: end,
+			toleranceBefore: CMTime(seconds: 3, preferredTimescale: 600),
+			toleranceAfter: .zero)
+		p.play()
 	}
 
 	// MARK: - Quality
@@ -686,6 +769,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		if !everPlayed, Date().timeIntervalSince(startedAt) > startupDeadline {
 			reportError("\u{8d85}\u{65f6}")
 			return
+		}
+
+		// Where to stand is decided from the window, so it cannot be decided
+		// before there is one - and a first frame that never arrives is worth one
+		// intervention before the deadline above takes the native path away.
+		if !everPlayed {
+			applyLiveOffset(it)
+			rescueStartup(p, it)
 		}
 
 		let size = it.presentationSize
