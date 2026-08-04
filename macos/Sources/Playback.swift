@@ -21,6 +21,17 @@ enum CushionDecision: Equatable {
 	case withdraw
 }
 
+/// Whether the playhead is still standing where it was told to stand.
+///
+/// `place` writes the offset and lets the framework reposition; `restore` also
+/// seeks, because the playhead has been measured at the live edge and an offset
+/// it is already ignoring will not move it.
+enum StationDecision: Equatable {
+	case unchanged
+	case place(offset: Double)
+	case restore(offset: Double)
+}
+
 /// Everything the governor needs to know about the player, sampled once per tick.
 struct PlaybackSample {
 	var bufferedAhead: Double?
@@ -92,6 +103,51 @@ struct PlaybackTuning {
 	var cushionBitrateFloor = 800_000.0
 	/// For how long, before the claim is blamed and withdrawn.
 	var cushionCollapseAfter = 6.0
+
+	// MARK: Station keeping
+	//
+	// Standing back from the live edge is not a startup action. It is an
+	// invariant, and this path is the only one of the three that did not treat
+	// it as one.
+	//
+	// On Android the target offset is declared on the MediaItem and lives as
+	// long as the item does, so ExoPlayer keeps station continuously - it even
+	// walks back to 18s after seekToDefaultPosition has deliberately put the
+	// playhead on the edge. hls.js does the same from liveSyncDuration. Here the
+	// offset was one write to configuredTimeOffsetFromLive during startup, so
+	// anything that lost it lost it for the entire session:
+	//
+	//   * the window was not yet measurable when the first frame arrived, so no
+	//     offset was ever written (the 600 kbps / 6.9s / 0.0s report), or
+	//   * rescueStartup cleared the offset and seeked to the edge to get a first
+	//     frame out of a feed that had produced none, and nothing ever restored
+	//     it afterwards.
+	//
+	// Both end in the same place, and that place is build 11: a playhead on the
+	// live edge has nothing ahead of it to prefetch, so the throughput estimate
+	// collapses and the ladder goes down with it. Being on the edge is the
+	// cause; a bottom-rung bitrate is the symptom.
+	//
+	// So the offset is now asserted whenever the playhead is measured away from
+	// where it belongs. The evidence delay and the cooldown are what keep that
+	// from becoming a nervous tic, because re-asserting an offset costs a
+	// reposition and a refill.
+
+	/// Nearer the live edge than this is not standing back at all.
+	var stationFloor = 3.0
+	/// How long the playhead must be measured off station before it is moved.
+	var stationEvidence = 5.0
+	/// The least time between two corrections. A correction is a rebuffer, so
+	/// this is generous on purpose.
+	var stationCooldown = 45.0
+	/// Kept between the offset and the oldest segment in the window, which is
+	/// always the next one to expire.
+	var stationHeadroom = 6.0
+	/// A window shallower than this has no room to stand back in, and a feed
+	/// that publishes one is better served by the framework's own default.
+	var stationMinimumWindow = 10.0
+	/// An offset smaller than this is not worth a reposition.
+	var stationMinimum = 4.0
 }
 
 /// Pure playback policy: the caller samples AVPlayer, this decides, the caller applies.
@@ -112,6 +168,13 @@ final class PlaybackGovernor {
 	private var startedSince: Double?
 	private var lowBitrateSince: Double?
 
+	/// Since when the playhead has been somewhere other than where it was told
+	/// to stand, or nil if it is on station.
+	private var offStationSince: Double?
+	private var stationBlockedUntil = -Double.greatestFiniteMagnitude
+	/// The last offset asserted, for the caller's telemetry and for tests.
+	private(set) var stationOffset: Double?
+
 	init(tuning: PlaybackTuning = PlaybackTuning()) { self.tuning = tuning }
 
 	func reset() {
@@ -122,6 +185,9 @@ final class PlaybackGovernor {
 		cushionAbandoned = false
 		startedSince = nil
 		lowBitrateSince = nil
+		offStationSince = nil
+		stationBlockedUntil = -Double.greatestFiniteMagnitude
+		stationOffset = nil
 	}
 
 	func releaseHold() { holding = false }
@@ -172,6 +238,63 @@ final class PlaybackGovernor {
 		}
 
 		return steerCatchUp(s, now: now)
+	}
+
+	/// Whether the playhead still stands where it was told to.
+	///
+	/// `applied` is the offset in force on the item: zero when none was ever
+	/// written, negative when one was deliberately given up. Both mean off
+	/// station, and both are recoverable - which is the whole point, since
+	/// before this existed either one was permanent for the session.
+	///
+	/// `window` is the seekable range the feed currently publishes. It is the
+	/// only guard that matters: an offset deeper than the window parks the
+	/// playhead on a segment that is about to expire, which is its own failure
+	/// mode and a far worse one than sitting near the edge.
+	func station(
+		_ s: PlaybackSample, window: Double?, applied: Double, now: Double
+	) -> StationDecision {
+		// Before the first frame the offset is placed by the startup path, which
+		// can do it without a reposition because nothing is on screen yet.
+		guard s.started, !s.viewerPaused else {
+			offStationSince = nil
+			return .unchanged
+		}
+		guard let window = window, window.isFinite,
+			window >= tuning.stationMinimumWindow
+		else {
+			offStationSince = nil
+			return .unchanged
+		}
+
+		let target = min(tuning.targetOffset, window - tuning.stationHeadroom)
+		guard target >= tuning.stationMinimum else {
+			offStationSince = nil
+			return .unchanged
+		}
+
+		// Nothing in force at all: writing the offset is enough, and the
+		// framework repositions from there.
+		let nothingInForce = applied <= 0
+		// An offset is in force and the playhead is on the edge regardless, so it
+		// is being ignored and has to be seeked back. An unmeasurable distance is
+		// not evidence of anything.
+		let ridingTheEdge = !nothingInForce && (s.behindLive ?? Double.infinity) < tuning.stationFloor
+
+		guard nothingInForce || ridingTheEdge else {
+			offStationSince = nil
+			return .unchanged
+		}
+
+		if offStationSince == nil { offStationSince = now }
+		guard let since = offStationSince, now - since >= tuning.stationEvidence,
+			now >= stationBlockedUntil
+		else { return .unchanged }
+
+		offStationSince = nil
+		stationBlockedUntil = now + tuning.stationCooldown
+		stationOffset = target
+		return ridingTheEdge ? .restore(offset: target) : .place(offset: target)
 	}
 
 	/// How much to prefetch, given how far behind the edge we are standing.
