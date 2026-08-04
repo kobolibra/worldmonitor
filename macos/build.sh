@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Assembles "Bloomberg Live.app" by hand. There is no Xcode project on purpose:
-# a .pbxproj is thousands of lines of generated noise, and this app is one
-# source file, one plist and an icon. Everything here is reviewable.
+# a .pbxproj is thousands of lines of generated noise, and this app is two
+# source files, one plist and an icon. Everything here is reviewable.
 #
 set -euo pipefail
 
@@ -25,13 +25,13 @@ echo "==> Compiling for Apple Silicon"
 swiftc -O \
 	-target "arm64-apple-macos${DEPLOY_TARGET}" \
 	-o "${BUILD}/${BIN_NAME}-arm64" \
-	Sources/main.swift
+	Sources/*.swift
 
 echo "==> Compiling for Intel"
 swiftc -O \
 	-target "x86_64-apple-macos${DEPLOY_TARGET}" \
 	-o "${BUILD}/${BIN_NAME}-x86_64" \
-	Sources/main.swift
+	Sources/*.swift
 
 echo "==> Fusing into a universal binary"
 lipo -create \
