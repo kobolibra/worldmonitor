@@ -26,10 +26,15 @@ enum CushionDecision: Equatable {
 /// `place` writes the offset and lets the framework reposition; `restore` also
 /// seeks, because the playhead has been measured at the live edge and an offset
 /// it is already ignoring will not move it.
+///
+/// `easeBack` is neither, and the difference is the whole point of it: it is a
+/// seek and nothing else. No offset is written, because it is only ever sent
+/// for a feed that has already demonstrated it cannot carry one.
 enum StationDecision: Equatable {
 	case unchanged
 	case place(offset: Double)
 	case restore(offset: Double)
+	case easeBack(seconds: Double)
 }
 
 /// Everything the governor needs to know about the player, sampled once per tick.
@@ -152,6 +157,39 @@ struct PlaybackTuning {
 	var stationMinimumWindow = 10.0
 	/// An offset smaller than this is not worth a reposition.
 	var stationMinimum = 4.0
+
+	// MARK: Easing a rescued feed off the edge
+	//
+	// Respecting the startup rescue is right, and leaving those feeds pinned to
+	// the live edge for the rest of the session is the price that was paid for
+	// it - a reconnect loop traded for a permanent bottom rung and no cushion,
+	// which is exactly the 0.0s behind live the viewer has been staring at.
+	//
+	// Both halves of that trade can be kept, because they are not the same
+	// instrument. What those feeds could not carry is
+	// configuredTimeOffsetFromLive, which AVFoundation takes literally and which
+	// parks the playhead on a segment about to expire; that property is never
+	// written for them again. A plain seek to a mark inside the window the feed
+	// itself publishes makes no such claim on the future - the playhead simply
+	// lands on media that already exists, and
+	// automaticallyPreservesTimeOffsetFromLive holds it roughly there afterwards.
+	//
+	// It is still an intervention on a feed known to be fragile, so it is spent
+	// once per item and only when the harm is measured rather than assumed: a
+	// rung under the floor, continuously, for long enough that a passing dip
+	// cannot trigger it. A rescued feed that is riding the edge and still
+	// delivering several Mbps is left alone, because there is nothing to fix.
+
+	/// A rescued feed delivering less than this is being hurt by where it stands.
+	var easeBitrateFloor = 800_000.0
+	/// For how long, uninterrupted, before that is acted on.
+	var easeEvidence = 10.0
+	/// No window shallower than this is worth stepping back into.
+	var easeMinimumWindow = 20.0
+	/// How far back to step, at most.
+	var easeStep = 8.0
+	/// A step shorter than this buys no prefetch worth the reposition.
+	var easeMinimum = 4.0
 }
 
 /// Pure playback policy: the caller samples AVPlayer, this decides, the caller applies.
@@ -179,6 +217,12 @@ final class PlaybackGovernor {
 	/// The last offset asserted, for the caller's telemetry and for tests.
 	private(set) var stationOffset: Double?
 
+	/// Since when a rescued feed has been delivering a bottom rung, or nil if it
+	/// is not, or is not being watched.
+	private var easeSince: Double?
+	/// Whether the one step back available to a rescued feed has been spent.
+	private(set) var easedBack = false
+
 	init(tuning: PlaybackTuning = PlaybackTuning()) { self.tuning = tuning }
 
 	func reset() {
@@ -192,6 +236,8 @@ final class PlaybackGovernor {
 		offStationSince = nil
 		stationBlockedUntil = -Double.greatestFiniteMagnitude
 		stationOffset = nil
+		easeSince = nil
+		easedBack = false
 	}
 
 	func releaseHold() { holding = false }
@@ -254,7 +300,8 @@ final class PlaybackGovernor {
 	///   * negative means the startup path gave an offset up deliberately, after
 	///     a feed produced no first frame with one in force. That is a finding
 	///     about the feed, not a gap to be filled in, and overruling it is how
-	///     build 33 turned a low rung into a reconnect loop.
+	///     build 33 turned a low rung into a reconnect loop. Those feeds get
+	///     easeRescued below instead, which never writes the offset.
 	///
 	/// `window` is the seekable range the feed currently publishes. It is the
 	/// only other guard that matters: an offset deeper than the window parks the
@@ -267,14 +314,17 @@ final class PlaybackGovernor {
 		// can do it without a reposition because nothing is on screen yet.
 		guard s.started, !s.viewerPaused else {
 			offStationSince = nil
+			easeSince = nil
 			return .unchanged
 		}
 		// A rescued feed has already told us it cannot carry an offset. Hauling it
-		// back would fail the item, and the retry would rescue it again.
-		guard applied >= 0 else {
+		// back with one would fail the item, and the retry would rescue it again.
+		// A seek is not that, and is decided separately.
+		if applied < 0 {
 			offStationSince = nil
-			return .unchanged
+			return easeRescued(s, window: window, now: now)
 		}
+		easeSince = nil
 		guard let window = window, window.isFinite,
 			window >= tuning.stationMinimumWindow
 		else {
@@ -310,6 +360,46 @@ final class PlaybackGovernor {
 		stationBlockedUntil = now + tuning.stationCooldown
 		stationOffset = target
 		return ridingTheEdge ? .restore(offset: target) : .place(offset: target)
+	}
+
+	/// One step back off the edge for a feed the startup path rescued.
+	///
+	/// Spent once, and only against measured harm. Everything about a rescued
+	/// feed says be careful with it: it is the one kind of feed known to have
+	/// failed to produce a frame under an instruction from this app. So a rung
+	/// above the floor buys no intervention at all, however close to the edge
+	/// the playhead sits, and a window without real room in it buys none either.
+	private func easeRescued(
+		_ s: PlaybackSample, window: Double?, now: Double
+	) -> StationDecision {
+		guard !easedBack else { return .unchanged }
+		guard let window = window, window.isFinite,
+			window >= tuning.easeMinimumWindow
+		else {
+			easeSince = nil
+			return .unchanged
+		}
+		// An unknown rung is not evidence of a collapsed one.
+		guard let bps = s.bitrate, bps < tuning.easeBitrateFloor else {
+			easeSince = nil
+			return .unchanged
+		}
+
+		if easeSince == nil { easeSince = now }
+		guard let since = easeSince, now - since >= tuning.easeEvidence else {
+			return .unchanged
+		}
+
+		let step = min(tuning.easeStep, window / 3)
+		guard step >= tuning.easeMinimum else {
+			easeSince = nil
+			return .unchanged
+		}
+
+		easeSince = nil
+		easedBack = true
+		stationOffset = step
+		return .easeBack(seconds: step)
 	}
 
 	/// How much to prefetch, given how far behind the edge we are standing.

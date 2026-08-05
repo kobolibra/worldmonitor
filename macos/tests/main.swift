@@ -30,7 +30,8 @@ func sample(ahead: Double? = 10, behind: Double? = 18, empty: Bool = false,
 let tuning = PlaybackTuning()
 print("target \(tuning.targetOffset)s, resume cushion \(tuning.rebufferCushion)s, catch-up \(tuning.catchUpRate)x")
 print("cushion \(tuning.targetOffset - tuning.cushionHeadroom)s after \(tuning.cushionSettleDelay)s, floor \(tuning.cushionBitrateFloor)")
-print("station: under \(tuning.stationFloor)s behind for \(tuning.stationEvidence)s, cooldown \(tuning.stationCooldown)s\n")
+print("station: under \(tuning.stationFloor)s behind for \(tuning.stationEvidence)s, cooldown \(tuning.stationCooldown)s")
+print("ease: under \(tuning.easeBitrateFloor) for \(tuning.easeEvidence)s, step \(tuning.easeStep)s, window \(tuning.easeMinimumWindow)s\n")
 
 do { let g=PlaybackGovernor(); check("a healthy tick changes nothing",g.decide(sample(),now:0),.none) }
 
@@ -303,6 +304,86 @@ do {
 	check("a new item forgets the correction",g.stationOffset == nil)
 	_=g.station(s,window:30,applied:18,now:4009)
 	check("and is not held back by the old cooldown",g.station(s,window:30,applied:18,now:4017),.restore(offset:18))
+}
+
+// ---- easing a rescued feed off the edge ----
+//
+// The other half of the build 33 trade. Respecting the rescue stopped the
+// reconnect loop and left those feeds pinned to the live edge, which is where
+// the ladder collapses: 0.0s behind live and a bottom rung, session after
+// session. A seek is not the instrument that failed - configuredTimeOffsetFromLive
+// is - so a seek is allowed, once, and only where the harm has been measured.
+
+do {
+	let g=PlaybackGovernor()
+	let s=sample(ahead:2,behind:0,bitrate:600_000)
+	check("a rescued feed on the floor waits out the evidence",g.station(s,window:30,applied:-1,now:5000),.unchanged)
+	check("nor a moment too early",g.station(s,window:30,applied:-1,now:5009),.unchanged)
+	check("then it is eased back, without an offset",g.station(s,window:30,applied:-1,now:5010),.easeBack(seconds:8))
+	check("and the step is spent",g.easedBack)
+	check("a second step is never taken",g.station(s,window:30,applied:-1,now:5200),.unchanged)
+}
+
+// A rescued feed delivering several Mbps from the edge is not being hurt by
+// standing there, and an intervention on a feed known to be fragile has to be
+// paid for by something.
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0,bitrate:3_000_000)
+	_=g.station(s,window:30,applied:-1,now:5300)
+	check("a healthy rescued feed is left exactly where it is",g.station(s,window:30,applied:-1,now:5320),.unchanged)
+	check("an unknown rung is not evidence either",g.station(sample(behind:0,bitrate:nil),window:30,applied:-1,now:5321),.unchanged)
+	check("and nothing was spent",!g.easedBack)
+}
+
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0,bitrate:600_000)
+	_=g.station(s,window:14,applied:-1,now:5400)
+	check("a shallow window is no place to step back into",g.station(s,window:14,applied:-1,now:5420),.unchanged)
+	check("nor an unmeasurable one",g.station(s,window:nil,applied:-1,now:5421),.unchanged)
+	check("so the step is still available",!g.easedBack)
+}
+
+// The step never reaches for more than a third of the window, because the
+// oldest segment in it is always the next one to expire.
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0,bitrate:400_000)
+	_=g.station(s,window:21,applied:-1,now:5500)
+	check("a 21s window is stepped back into by a third",g.station(s,window:21,applied:-1,now:5510),.easeBack(seconds:7))
+}
+
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0,bitrate:600_000)
+	_=g.station(s,window:30,applied:-1,now:5600)
+	check("a rung recovering on its own clears the evidence",g.station(sample(behind:0,bitrate:3_000_000),window:30,applied:-1,now:5605),.unchanged)
+	_=g.station(s,window:30,applied:-1,now:5606)
+	check("so the clock starts over",g.station(s,window:30,applied:-1,now:5614),.unchanged)
+	check("and only then is it eased",g.station(s,window:30,applied:-1,now:5616),.easeBack(seconds:8))
+}
+
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0,bitrate:600_000)
+	_=g.station(s,window:30,applied:-1,now:5700)
+	_=g.station(s,window:30,applied:-1,now:5711)
+	check("the step was taken",g.easedBack)
+	g.reset()
+	check("a new item gets its own",!g.easedBack)
+	_=g.station(s,window:30,applied:-1,now:5712)
+	check("and takes it on the same terms",g.station(s,window:30,applied:-1,now:5723),.easeBack(seconds:8))
+}
+
+do {
+	let g=PlaybackGovernor()
+	let s=sample(behind:0,started:false,bitrate:600_000)
+	_=g.station(s,window:30,applied:-1,now:5800)
+	check("before the first frame a rescued feed is still the startup path's",g.station(s,window:30,applied:-1,now:5820),.unchanged)
+	let paused=sample(behind:0,viewerPaused:true,bitrate:600_000)
+	_=g.station(paused,window:30,applied:-1,now:5830)
+	check("and a paused viewer is never seeked",g.station(paused,window:30,applied:-1,now:5850),.unchanged)
 }
 
 print("")
