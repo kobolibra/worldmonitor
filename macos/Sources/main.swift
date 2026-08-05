@@ -183,6 +183,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// things a viewer sees the delay of.
 	private let startupPollInterval = 0.1
 	private let telemetryInterval = 1.0
+	/// A wall clock difference larger than this is not a latency, it is a clock
+	/// disagreement or a feed republishing an archive, and reporting it as one
+	/// would be worse than reporting nothing.
+	private let latencyCeiling = 600.0
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		buildMenuBar()
@@ -584,10 +588,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// Spent at most once per item, and well before the startup deadline, since
 	/// letting that expire costs the whole native path for the session.
 	///
-	/// The offset it clears is no longer cleared for good. Sitting on the live
-	/// edge is what collapses the ladder, so leaving a rescued item there was
-	/// trading a black screen for 400 kbps; applyStation walks it back once the
-	/// feed is actually producing frames.
+	/// The offset it clears is not written again for this item, because that
+	/// property is precisely what the feed has just failed under. Sitting on the
+	/// live edge collapses the ladder, though, so the feed is not simply left
+	/// there either: applyStation eases it back with a plain seek if - and only
+	/// if - the rung is measured to have suffered for it.
 	private func rescueStartup(_ p: AVPlayer, _ it: AVPlayerItem) {
 		guard !rescuedStartup,
 			it.status == .readyToPlay,
@@ -624,6 +629,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 	/// the offset off, build 31 reached it by never placing one, and both
 	/// reports read the same - bottom rung, no cushion, zero seconds behind
 	/// live.
+	///
+	/// Three moves come back from the governor and they are not
+	/// interchangeable. `place` states an offset the framework then honours.
+	/// `restore` states it and seeks, because an offset already being ignored
+	/// will not move anything by itself. `easeBack` only seeks: it is sent for
+	/// feeds the startup rescue gave up on, and writing the offset for one of
+	/// those is what turned build 33 into a reconnect loop.
 	///
 	/// The policy is in Playback.swift, along with the evidence delay and the
 	/// cooldown that keep a correction from becoming a nervous tic: every one of
@@ -664,6 +676,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 			// Loose tolerances on purpose: this is a request to be roughly a
 			// cushion's distance back, not to land on a frame, and an exact seek
 			// on a live playlist costs more than it buys.
+			p.seek(
+				to: mark,
+				toleranceBefore: CMTime(seconds: 2, preferredTimescale: 600),
+				toleranceAfter: CMTime(seconds: 2, preferredTimescale: 600))
+
+		case .easeBack(let seconds):
+			// A rescued feed. The seek lands on media the feed itself publishes,
+			// which is a far weaker claim than an offset - and appliedOffset
+			// stays negative on purpose, so nothing downstream mistakes this for
+			// an offset being in force and starts asserting one.
+			guard let end = it.seekableTimeRanges.last?.timeRangeValue.end else { return }
+			let mark = CMTimeSubtract(end, CMTime(seconds: seconds, preferredTimescale: 600))
 			p.seek(
 				to: mark,
 				toleranceBefore: CMTime(seconds: 2, preferredTimescale: 600),
@@ -908,6 +932,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		statsTimer = nil
 	}
 
+	/// How far behind the actual broadcast the frame on screen is.
+	///
+	/// Not the same question as how far the playhead is from the end of the
+	/// seekable range, and the difference is most of the answer. That end is
+	/// merely the newest frame this player has been told about, and by the time
+	/// it has been told, the studio has encoded it, packaged it into a segment
+	/// that could not be published until it was complete, pushed it to a CDN and
+	/// waited out a playlist refresh. Every one of those is real time the viewer
+	/// is behind, and none of it is visible from the playlist geometry - so the
+	/// old figure understated the truth by twenty to forty seconds and, once the
+	/// playhead rode the edge, sat at 0.0s while the viewer was half a minute
+	/// late.
+	///
+	/// EXT-X-PROGRAM-DATE-TIME is the stream's own account of when each segment
+	/// happened, and currentDate() maps the playhead through it. Against the
+	/// local clock that is the whole latency, end to end.
+	///
+	/// It rests on two things outside this app - the feed carrying the tag, and
+	/// this Mac's clock being roughly right - so an implausible answer is
+	/// discarded rather than shown, and a feed without the tag keeps the old
+	/// measurement. The edge distance is reported alongside either way, because
+	/// it is what the governor steers on and the two disagreeing is diagnostic
+	/// rather than confusing.
+	private func trueLatency(_ it: AVPlayerItem) -> Double? {
+		guard let stamp = it.currentDate() else { return nil }
+		let seconds = Date().timeIntervalSince(stamp)
+		guard seconds.isFinite, seconds > 0, seconds < latencyCeiling else { return nil }
+		return seconds
+	}
+
 	private func tick() {
 		guard let p = player, let it = item else { return }
 
@@ -972,6 +1026,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 		let stamp = Date().timeIntervalSinceReferenceDate
 		let sample = PlaybackSample(
 			bufferedAhead: ahead,
+			// The governor steers on the edge distance and not on the wall clock
+			// figure below, deliberately: everything it can do - stand back,
+			// catch up, ease off the edge - acts on the playhead's position
+			// inside the published window. The pipeline ahead of that window is
+			// real latency and none of it is ours to move.
 			behindLive: behind,
 			bufferEmpty: it.isPlaybackBufferEmpty,
 			likelyToKeepUp: it.isPlaybackLikelyToKeepUp,
@@ -992,7 +1051,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
 		var payload: [String: Any] = ["t": "stats"]
 		if let ahead = ahead { payload["buf"] = ahead }
-		if let behind = behind { payload["lat"] = behind }
+		// What the rail calls latency is the distance to the broadcast, when the
+		// feed publishes enough to know it, and the distance to the end of the
+		// playlist when it does not. The edge distance travels alongside so the
+		// page can show both and neither figure has to pretend to be the other.
+		let wall = trueLatency(it)
+		if let wall = wall {
+			payload["lat"] = wall
+			payload["true"] = true
+		} else if let behind = behind {
+			payload["lat"] = behind
+			payload["true"] = false
+		}
+		if let behind = behind { payload["edge"] = behind }
 		if let bitrate = bitrate { payload["bps"] = Int(bitrate) }
 		if size.width > 0 {
 			payload["w"] = Int(size.width)
