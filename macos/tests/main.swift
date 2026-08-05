@@ -378,10 +378,10 @@ do {
 
 do {
 	let g=PlaybackGovernor()
-	let s=sample(behind:0,bitrate:600_000,started:false)
+	let s=sample(behind:0,started:false,bitrate:600_000)
 	_=g.station(s,window:30,applied:-1,now:5800)
 	check("before the first frame a rescued feed is still the startup path's",g.station(s,window:30,applied:-1,now:5820),.unchanged)
-	let paused=sample(behind:0,bitrate:600_000,viewerPaused:true)
+	let paused=sample(behind:0,viewerPaused:true,bitrate:600_000)
 	_=g.station(paused,window:30,applied:-1,now:5830)
 	check("and a paused viewer is never seeked",g.station(paused,window:30,applied:-1,now:5850),.unchanged)
 }
