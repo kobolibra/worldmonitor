@@ -41,6 +41,11 @@ struct PlaybackSample {
 	var pinned: Bool
 	/// Whether reopening the master is possible at all.
 	var canDropPin: Bool
+	/// True end-to-end latency from AVPlayerItem.currentDate(), or nil
+	/// when the feed does not publish the tag or the clock is not usable.
+	/// Always larger than or equal to behindLive; the difference is the
+	/// CDN and packaging delay that the edge distance cannot see.
+	var trueLatency: Double?
 }
 
 /// The tuning. Every value here has a counterpart in the Android build.
@@ -135,12 +140,11 @@ final class PlaybackGovernor {
 			return .none
 		}
 
-		// Only a genuine starve counts: the buffer is empty and the player
-		// itself does not think it can keep up. AVFoundation's own assessment
-		// is the more reliable signal — a transient bufferEmpty while
-		// likelyToKeepUp is true is just a segment arriving, not a reason to
-		// pause and force a full rebuffer.
-		if s.started, s.rate > 0, s.bufferEmpty, !s.likelyToKeepUp, (s.bufferedAhead ?? 0) < 0.5 {
+		// Only a genuine starve counts: the buffer is empty, the player does
+		// not think it can keep up, and the measured buffer is known to be
+		// thin. A nil bufferedAhead means loadedTimeRanges is empty — a
+		// transient state during playlist updates that is not a starve.
+		if s.started, s.rate > 0, s.bufferEmpty, !s.likelyToKeepUp, let ahead = s.bufferedAhead, ahead < 0.5 {
 			holding = true
 			holdingSince = now
 			if catchingUp {
@@ -164,14 +168,23 @@ final class PlaybackGovernor {
 
 	private func steerCatchUp(_ s: PlaybackSample, now: Double) -> PlaybackAction {
 		guard s.started, s.rate > 0,
-			let behind = s.behindLive,
 			let ahead = s.bufferedAhead
 		else {
 			return endCatchUpIfNeeded(now: now, force: false)
 		}
 
+		// The true latency is the distance to the actual broadcast and
+		// includes the CDN delay. The edge distance is the distance to the
+		// end of the seekable range, which the framework keeps at the
+		// target offset. When the true latency is available it is the more
+		// meaningful number to steer on.
+		let latency = s.trueLatency ?? s.behindLive
+		guard let latency = latency else {
+			return endCatchUpIfNeeded(now: now, force: false)
+		}
+
 		if catchingUp {
-			let recovered = behind <= tuning.targetOffset + tuning.catchUpRelease
+			let recovered = latency <= tuning.targetOffset + tuning.catchUpRelease
 			let cushionGone = ahead < tuning.catchUpAbortBuffer
 			let tooLong = now - catchUpSince > tuning.catchUpMaxDuration
 			if recovered || cushionGone || tooLong {
@@ -183,7 +196,7 @@ final class PlaybackGovernor {
 		}
 
 		if now < catchUpBlockedUntil { return .none }
-		if behind > tuning.targetOffset + tuning.catchUpTrigger,
+		if latency > tuning.targetOffset + tuning.catchUpTrigger,
 			ahead >= tuning.catchUpMinimumBuffer
 		{
 			catchingUp = true

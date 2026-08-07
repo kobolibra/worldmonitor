@@ -753,9 +753,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			if v.isFinite { behind = max(0, v) }
 		}
 
+		// True latency, measured once here so it is the same frame the
+		// governor decides on and the rail displays.
+		let wall = trueLatency(it)
+
+		// ---- True-latency catch-up ----
+		// The governor's catch-up steers on the edge distance, which the
+		// framework keeps at the target offset. When the CDN is behind the
+		// actual broadcast, the true latency can be much larger than the
+		// edge distance, and the governor never sees a reason to act.
+		// This block reduces the target offset when the true latency is
+		// excessive, letting the framework reposition the playhead closer
+		// to the edge and shrinking the end-to-end latency.
+		if let wall = wall, let ahead = ahead,
+		   wall > targetOffset + governor.tuning.catchUpTrigger,
+		   ahead >= governor.tuning.catchUpMinimumBuffer
+		{
+			let excess = wall - targetOffset
+			let newOffset = max(6.0, targetOffset - excess * 0.3)
+			it.configuredTimeOffsetFromLive = CMTime(seconds: newOffset, preferredTimescale: 600)
+		} else if wall == nil || (wall! <= targetOffset + governor.tuning.catchUpRelease) {
+			// Restore the target offset once the latency is back to normal.
+			// Also restore when there is no true-latency signal at all, so a
+			// feed that stops publishing the tag does not stay on a reduced
+			// offset forever.
+			it.configuredTimeOffsetFromLive = CMTime(seconds: targetOffset, preferredTimescale: 600)
+		}
+
 		// A dropped pin reopens the player, which means the item this tick was
 		// reading is gone and the stats about to be sent describe nothing.
-		if govern(p, it, ahead: ahead, behind: behind) { return }
+		if govern(p, it, ahead: ahead, behind: behind, wall: wall) { return }
 
 		var payload: [String: Any] = ["t": "stats"]
 		if let ahead = ahead { payload["buf"] = ahead }
@@ -763,7 +790,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		// feed publishes enough to know it, and the distance to the end of the
 		// playlist when it does not. The edge distance travels alongside so the
 		// page can show both and neither figure has to pretend to be the other.
-		let wall = trueLatency(it)
 		if let wall = wall {
 			payload["lat"] = wall
 			payload["true"] = true
@@ -792,7 +818,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	///
 	/// Returns true when the player was replaced, in which case the caller must
 	/// stop: everything it has read describes an item that is no longer current.
-	private func govern(_ p: AVPlayer, _ it: AVPlayerItem, ahead: Double?, behind: Double?) -> Bool {
+	private func govern(_ p: AVPlayer, _ it: AVPlayerItem, ahead: Double?, behind: Double?, wall: Double?) -> Bool {
 		let sample = PlaybackSample(
 			bufferedAhead: ahead,
 			behindLive: behind,
@@ -802,7 +828,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			started: everPlayed,
 			viewerPaused: userPaused,
 			pinned: pinnedHeight != 0,
-			canDropPin: masterURL != nil)
+			canDropPin: masterURL != nil,
+			trueLatency: wall)
 
 		switch governor.decide(sample, now: Date().timeIntervalSinceReferenceDate) {
 		case .none:
@@ -820,8 +847,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			return false
 
 		case .resume:
+			// Prevent the framework from seeking to restore the configured
+			// offset. While the player was held the seekable range end kept
+			// moving forward. Reset the configured offset to the current
+			// effective offset so the framework sees no drift to correct
+			// and does not seek — which would cause the buffer measurement
+			// to jump.
+			if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
+				let currentOffset = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
+				if currentOffset.isFinite, currentOffset > 0 {
+					it.configuredTimeOffsetFromLive = CMTime(seconds: currentOffset, preferredTimescale: 600)
+				}
+			}
 			p.play()
 			send(["t": "playing"])
+			// Restore the target offset after the player has started.
+			// The framework will gradually reposition the playhead — no
+			// sudden jump, no repeated seconds.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+				guard let self = self, let it = self.item else { return }
+				it.configuredTimeOffsetFromLive = CMTime(seconds: self.targetOffset, preferredTimescale: 600)
+			}
 			return false
 
 		case .catchUp(let rate):
@@ -1169,6 +1215,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	}
 
 	// MARK: - Lifecycle
+
+	func applicationDidResignActive(_ notification: Notification) {
+		// Match Android's onStop(): pause the player but do not release it.
+		// The player continues to buffer while paused, and pausing prevents
+		// the system from starving it while the window is not key.
+		//
+		// Without this, the player keeps playing in the background, macOS
+		// throttles the app, the player starves, and switching back shows a
+		// frozen picture while it recovers.
+		player?.pause()
+	}
+
+	func applicationDidBecomeActive(_ notification: Notification) {
+		guard let p = player, let it = item, everPlayed, !userPaused else { return }
+
+		// Prevent the framework from seeking to restore the configured
+		// offset. While the player was paused the seekable range end kept
+		// moving forward, so the effective offset is now larger than the
+		// configured one. Reset the configured offset to the current
+		// effective offset so the framework sees no drift to correct.
+		if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
+			let currentOffset = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
+			if currentOffset.isFinite, currentOffset > 0 {
+				it.configuredTimeOffsetFromLive = CMTime(seconds: currentOffset, preferredTimescale: 600)
+			}
+		}
+
+		governor.releaseHold()
+		p.play()
+
+		// After the player has started, restore the target offset. The
+		// framework will gradually reposition the playhead — no sudden
+		// jump, no repeated seconds.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+			guard let self = self, let it = self.item else { return }
+			it.configuredTimeOffsetFromLive = CMTime(seconds: self.targetOffset, preferredTimescale: 600)
+		}
+	}
 
 	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
 		return true

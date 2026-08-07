@@ -11,10 +11,12 @@ func check(_ label: String, _ passed: Bool) {
 }
 func sample(ahead: Double? = 10, behind: Double? = 18, empty: Bool = false,
 	keepUp: Bool = true, rate: Double = 1, started: Bool = true,
-	viewerPaused: Bool = false, pinned: Bool = false, canDropPin: Bool = true) -> PlaybackSample {
+	viewerPaused: Bool = false, pinned: Bool = false, canDropPin: Bool = true,
+	trueLatency: Double? = nil) -> PlaybackSample {
 	PlaybackSample(bufferedAhead: ahead, behindLive: behind, bufferEmpty: empty,
 		likelyToKeepUp: keepUp, rate: rate, started: started,
-		viewerPaused: viewerPaused, pinned: pinned, canDropPin: canDropPin)
+		viewerPaused: viewerPaused, pinned: pinned, canDropPin: canDropPin,
+		trueLatency: trueLatency)
 }
 
 let tuning = PlaybackTuning()
@@ -136,6 +138,36 @@ do {
 	check("a hold is in place",g.holding)
 	g.releaseHold()
 	check("releaseHold clears it",!g.holding)
+}
+
+// ---- nil bufferedAhead ----
+
+do {
+	let g=PlaybackGovernor()
+	check("a nil bufferedAhead is not a starve",g.decide(sample(ahead:nil,empty:true,keepUp:false),now:1850),.none)
+	check("the player is not held",!g.holding)
+}
+
+// ---- true-latency catch-up ----
+
+do {
+	let g=PlaybackGovernor()
+	// Edge distance is on target (18s) but true latency is 30s — the
+	// CDN is 12s behind the broadcast. The true latency, not the edge
+	// distance, should trigger the catch-up.
+	check("true latency triggers catch-up",g.decide(sample(behind:18,trueLatency:30),now:1900),.catchUp(rate:1.1))
+}
+
+do {
+	let g=PlaybackGovernor()
+	_=g.decide(sample(behind:18,trueLatency:30),now:2000)
+	check("true latency recovery ends catch-up",g.decide(sample(behind:18,trueLatency:19),now:2005),.endCatchUp)
+}
+
+// Edge distance still works when there is no true-latency signal.
+do {
+	let g=PlaybackGovernor()
+	check("edge distance catch-up still works",g.decide(sample(behind:30),now:2100),.catchUp(rate:1.1))
 }
 
 print("")
