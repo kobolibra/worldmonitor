@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import Cocoa
 import WebKit
 
@@ -75,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	private var playerLayer: AVPlayerLayer?
 	private var player: AVPlayer?
 	private var item: AVPlayerItem?
+	private var pipWindow: NSWindow?
 	private var statsTimer: Timer?
 	private var stageRect: CGRect = .zero
 	private var muted = false
@@ -163,6 +165,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		buildWebView()
 		buildWindow()
 		stayAwake()
+
+		// When the PiP window is closed by the user (not by the toggle),
+		// restore the in-app picture.
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(pipWindowWillClose(_:)),
+			name: NSWindow.willCloseNotification,
+			object: nil)
 
 		web.load(URLRequest(url: homeURL))
 	}
@@ -278,6 +288,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			applyLevel((o["h"] as? Int) ?? Int((o["h"] as? Double) ?? -1))
 		case "volume":
 			if let v = o["v"] as? Double { player?.volume = Float(max(0, min(1, v))) }
+		case "pip":
+			togglePiP()
 		default:
 			break
 		}
@@ -414,6 +426,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	}
 
 	private func releasePlayer() {
+		pipWindow?.close()
+		pipWindow = nil
 		stopStats()
 		player?.pause()
 		playerLayer?.removeFromSuperlayer()
@@ -1257,6 +1271,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	// playhead — a single forward jump, which is the expected behaviour
 	// for a live stream you looked away from. No pause, no flicker,
 	// no seek, no repeat.
+
+	// MARK: - Picture in Picture
+	//
+	// macOS does not expose AVPictureInPictureController (iOS/tvOS only).
+	// Instead, a floating NSPanel with an AVPlayerView sharing the same
+	// AVPlayer instance provides the same experience: a small, always-on-top
+	// window that stays on screen across spaces and fullscreen transitions.
+	//
+	// The AVPlayerView owns its own AVPlayerLayer internally, so the
+	// player renders to both the floating panel (when visible) and the
+	// in-app videoView (when not hidden). Hiding videoView is enough to
+	// avoid rendering the same frame twice.
+
+	private func togglePiP() {
+		guard let p = player else { return }
+
+		if let w = pipWindow, w.isVisible {
+			w.close()
+			return
+		}
+
+		let pipRect = NSRect(x: 0, y: 0, width: 480, height: 270)
+		let style: NSWindow.StyleMask = [
+			.titled, .closable, .resizable, .nonactivatingPanel,
+		]
+		let w = NSPanel(
+			contentRect: pipRect, styleMask: style, backing: .buffered,
+			defer: false)
+		w.title = "Bloomberg Live"
+		w.isFloatingPanel = true
+		w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+		w.level = .floating
+		w.isMovableByWindowBackground = true
+		w.minSize = NSSize(width: 320, height: 180)
+		w.appearance = NSAppearance(named: .darkAqua)
+		w.backgroundColor = backdrop
+
+		let pv = AVPlayerView(frame: pipRect)
+		pv.player = p
+		pv.controlsStyle = .floating
+		if #available(macOS 12.0, *) {
+			pv.showsFullScreenToggle = false
+		}
+		pv.autoresizingMask = [.width, .height]
+
+		w.contentView = pv
+
+		if let screen = NSScreen.main {
+			let sr = screen.visibleFrame
+			w.setFrameOrigin(
+				NSPoint(
+					x: sr.maxX - pipRect.width - 20,
+					y: sr.minY + 20))
+		}
+
+		videoView.isHidden = true
+		w.makeKeyAndOrderFront(nil)
+
+		send(["t": "pip", "on": true])
+		pipWindow = w
+	}
+
+	/// The user closed the PiP window themselves (red button), not via the
+	/// toggle. Restore the in-app picture.
+	@objc private func pipWindowWillClose(_ notification: Notification) {
+		guard let w = notification.object as? NSWindow, w === pipWindow
+		else { return }
+		pipWindow = nil
+		videoView.isHidden = false
+		applyRect()
+		applyBackingScale()
+		send(["t": "pip", "on": false])
+	}
 
 	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
 		return true
