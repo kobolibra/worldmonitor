@@ -62,7 +62,7 @@
   var PAUSE='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4.6h3.4v14.8H7zm6.6 0H17v14.8h-3.4z"/></svg>';
   var SOUND='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9.2h3.4L12 5.2v13.6L7.4 14.8H4z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.4 9.3a3.8 3.8 0 010 5.4M18.1 6.8a7.4 7.4 0 010 10.4"/></svg>';
   var MUTED='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9.2h3.4L12 5.2v13.6L7.4 14.8H4z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.6 9.6l4.8 4.8m0-4.8l-4.8 4.8"/></svg>';
-  var FULL='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M4.5 9.2V4.5h4.7M19.5 9.2V4.5h-4.7M4.5 14.8v4.7h4.7M19.5 14.8v4.7h-4.7"/></svg>';
+  var PIP='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="12" y="9" width="8" height="6" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/></svg>';
 
   var style=document.createElement("style");
   style.textContent=
@@ -143,12 +143,14 @@
     track.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();post({a:"live"});});
     var tag=document.createElement("span");tag.className="nlive";tag.innerHTML="<i></i>LIVE";
     btnMute=button(SOUND,"\u9759\u97f3 / \u53d6\u6d88\u9759\u97f3",function(){post({a:"mute",on:!muted});});
-    /* Deliberately the page's own fullscreen control rather than a second
-       implementation: that button already knows to ask the shell to take the
-       window fullscreen instead of expanding an element inside a window that
-       stays put. */
-    var full=button(FULL,"\u5168\u5c4f",function(){var f=document.getElementById("fsBtn");if(f)f.click();});
-    bar.appendChild(btnPlay);bar.appendChild(track);bar.appendChild(tag);bar.appendChild(btnMute);bar.appendChild(full);api.screen.appendChild(bar);placeBar();sync();
+    /* Fullscreen is on the rail and via the F key; the nbar does not need a
+       second copy. On macOS the slot goes to Picture in Picture instead. */
+    if(shell==="mac"){
+      var pip=button(PIP,"\u753b\u4e2d\u753b",function(){post({a:"pip"});});
+      bar.appendChild(btnPlay);bar.appendChild(track);bar.appendChild(tag);bar.appendChild(btnMute);bar.appendChild(pip);
+    } else {
+      bar.appendChild(btnPlay);bar.appendChild(track);bar.appendChild(tag);bar.appendChild(btnMute);
+    }api.screen.appendChild(bar);placeBar();sync();
     /* Show the nbar when the pointer enters or moves, and hide it after a
        timeout. In cinema mode the idle timer in app.js takes over; these
        listeners become no-ops because showNbar checks for cinema. */
