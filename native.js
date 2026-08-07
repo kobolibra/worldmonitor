@@ -36,6 +36,28 @@
   var EXTRA=[];
   var TARGET_LAT=18,BEHIND_LAT=28,BADGE_MS=1800;
 
+  /* ---------- Nbar auto-hide ----------
+     The nbar hides after NBAR_TIMEOUT ms of mouse inactivity in non-cinema
+     mode. This matches the behaviour of WebKit's own video controls, which
+     fade after a few seconds even when the pointer is over the picture.
+     Cinema mode is handled by app.js's idle timer instead. */
+  var nbarTimer = null;
+  var NBAR_TIMEOUT = 3000; // 3 s, matching WebKit's video controls
+
+  function showNbar(){
+    if(!bar || document.body.classList.contains('cinema')) return;
+    bar.classList.add('shown');
+    clearTimeout(nbarTimer);
+    nbarTimer = setTimeout(function(){
+      if(bar && !bar.matches(':focus-within')) bar.classList.remove('shown');
+    }, NBAR_TIMEOUT);
+  }
+
+  function hideNbar(){
+    clearTimeout(nbarTimer);
+    if(bar) bar.classList.remove('shown');
+  }
+
   var PLAY='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 4.8v14.4l11.2-7.2z"/></svg>';
   var PAUSE='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4.6h3.4v14.8H7zm6.6 0H17v14.8h-3.4z"/></svg>';
   var SOUND='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9.2h3.4L12 5.2v13.6L7.4 14.8H4z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.4 9.3a3.8 3.8 0 010 5.4M18.1 6.8a7.4 7.4 0 010 10.4"/></svg>';
@@ -49,7 +71,9 @@
        points, 40 points tall, 28 point buttons, 16 point glyphs, a four point
        track and a twelve point knob. */
     ".nbar{position:absolute;left:10px;right:10px;bottom:10px;z-index:6;height:40px;display:flex;align-items:center;gap:2px;padding:0 8px;border-radius:11px;border:1px solid rgba(255,255,255,.08);background:rgba(38,38,40,.62);-webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);box-shadow:0 3px 14px rgba(0,0,0,.34);opacity:0;pointer-events:none;transform:translateY(6px);transition:opacity .18s ease,transform .18s ease}"+
-    ".screen:hover .nbar,.nbar:focus-within{opacity:1;pointer-events:auto;transform:none}"+
+    /* Shown by the timeout logic below, not by CSS :hover. A stationary
+       pointer would keep :hover true forever, and the nbar would never fade. */
+    ".nbar.shown,.nbar:focus-within{opacity:1;pointer-events:auto;transform:none}"+
     /* Cinema mode floats the rail over the picture, so the stage reaches the
        window's bottom edge. placeBar() measures the rail's content height;
        this is only the fallback for the tick before that runs. And the same
@@ -125,6 +149,12 @@
        stays put. */
     var full=button(FULL,"\u5168\u5c4f",function(){var f=document.getElementById("fsBtn");if(f)f.click();});
     bar.appendChild(btnPlay);bar.appendChild(track);bar.appendChild(tag);bar.appendChild(btnMute);bar.appendChild(full);api.screen.appendChild(bar);placeBar();sync();
+    /* Show the nbar when the pointer enters or moves, and hide it after a
+       timeout. In cinema mode the idle timer in app.js takes over; these
+       listeners become no-ops because showNbar checks for cinema. */
+    api.screen.addEventListener('mousemove', showNbar, {passive: true});
+    api.screen.addEventListener('mouseenter', showNbar);
+    api.screen.addEventListener('mouseleave', hideNbar);
   }
 
   /* ---------- The television's badge ----------
