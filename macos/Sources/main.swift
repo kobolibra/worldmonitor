@@ -164,21 +164,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		buildWindow()
 		stayAwake()
 
-		// Pause the player before the app resigns active, so the playhead
-		// does not advance while Core Animation has paused the AVPlayerLayer
-		// display link. If the player keeps running, the playhead moves
-		// seconds ahead of the last displayed frame, and when the display
-		// link resumes the picture jumps forward — the visible stutter.
-		//
-		// willResignActive is used, not didResignActive, so the pause
-		// happens while the display link is still running and the last
-		// frame is properly held on screen.
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(willResignActive),
-			name: NSApplication.willResignActiveNotification,
-			object: nil)
-
 		web.load(URLRequest(url: homeURL))
 	}
 
@@ -405,7 +390,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		// Never crop. The graphics package on this channel lives at the edges of
 		// the frame: filling the box would cut off the ticker and the news band.
 		layer.videoGravity = .resizeAspect
-		layer.backgroundColor = NSColor.clear.cgColor
+		// Black, not clear. When AVPlayerLayer briefly cannot supply a frame
+		// during a display-link transition it shows its background colour.
+		// Clear shows the window backdrop, producing a visible flicker.
+		// Black is indistinguishable from the letterbox and far less jarring.
+		layer.backgroundColor = NSColor.black.cgColor
 		videoView.layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
 		videoView.layer?.addSublayer(layer)
 
@@ -1035,6 +1024,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		videoView = NSView(frame: .zero)
 		videoView.wantsLayer = true
 		videoView.layer?.backgroundColor = NSColor.clear.cgColor
+		// Never redraw the view's backing layer during window state changes
+		// (active ↔ inactive). The default (.duringViewResize) can trigger
+		// a layer rebuild that briefly detaches the AVPlayerLayer sublayer,
+		// producing a visible flicker. The sublayer tree is set once and
+		// managed by the player lifecycle, not by AppKit redraw policy.
+		videoView.layerContentsRedrawPolicy = .onSetNeedsDisplay
 		videoView.isHidden = true
 		host.addSubview(videoView)
 
@@ -1240,46 +1235,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	}
 
 	// MARK: - Lifecycle
-
-	@objc private func willResignActive(_ notification: Notification) {
-		// Pause the player while the display link is still running.
-		// The last frame is held on screen and the playhead stops.
-		// When the display link resumes, the playhead has not moved
-		// and the next frame is the correct one — no jump, no stutter.
-		//
-		// Pausing in didResignActive is too late: by then the display
-		// link is already paused and the pause() call races with the
-		// layer teardown, producing a visible flicker.
-		player?.pause()
-	}
-
-	func applicationDidBecomeActive(_ notification: Notification) {
-		guard let p = player, let it = item, everPlayed, !userPaused else { return }
-
-		// While the player was paused the seekable range kept growing.
-		// The effective offset is now larger than the configured one.
-		// Reset the configured offset to the current effective offset
-		// so the framework sees no drift to correct and does not seek.
-		if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
-			let co = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
-			if co.isFinite, co > 0 {
-				currentConfiguredOffset = co
-				it.configuredTimeOffsetFromLive = CMTime(seconds: co, preferredTimescale: 600)
-			}
-		}
-
-		governor.releaseHold()
-		p.play()
-		// The target offset is deliberately not restored here. The
-		// true-latency catch-up in tick() will walk it back gradually.
-		// A delayed restore would cause a seek and the stutter symptom.
-		//
-		// This is the critical difference from the broken build 42:
-		// the player was paused before the display link dropped, so
-		// the playhead has not moved and the frame does not jump.
-		// The offset reset prevents the framework from seeking, and
-		// play() resumes from exactly where it stopped.
-	}
+	//
+	// The app deliberately does NOT pause or resume the player across
+	// active-state transitions. The root cause of the window-switching
+	// stutter is architectural: AVPlayerLayer renders in-process, and
+	// its internal display link pauses frame output when the app
+	// resigns active. Calling player.pause() during this transition
+	// compounds the problem — AVPlayerLayer briefly clears its contents
+	// (a known macOS defect, flutter/flutter#135999), producing the
+	// visible flicker on switch-away. Calling player.play() in
+	// didBecomeActive re-establishes the decoding pipeline, producing
+	// the second flicker on switch-back.
+	//
+	// The web decoder mode does not have this problem because hls.js
+	// runs in the Web Content process (separate from the app), whose
+	// display link is not affected by NSApplication's active state.
+	//
+	// The correct approach is to do nothing: let the player keep
+	// running. When the display link pauses, the last frame is held
+	// on screen. When it resumes, the video continues from the current
+	// playhead — a single forward jump, which is the expected behaviour
+	// for a live stream you looked away from. No pause, no flicker,
+	// no seek, no repeat.
 
 	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
 		return true
