@@ -1311,9 +1311,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		let pv = AVPlayerView(frame: pipRect)
 		pv.player = p
 		pv.controlsStyle = .floating
-		if #available(macOS 12.0, *) {
-			pv.showsFullScreenToggle = false
-		}
 		pv.autoresizingMask = [.width, .height]
 
 		w.contentView = pv
