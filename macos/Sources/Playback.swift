@@ -2,254 +2,127 @@ import Foundation
 
 /// What to do with the player on this tick.
 enum PlaybackAction: Equatable {
+	/// Nothing to change.
 	case none
+	/// Stop playing and wait for the buffer to refill. The picture is frozen
+	/// either way during a starve; pausing deliberately is what stops the
+	/// player from resuming on the first sample that arrives and starving
+	/// again a second later.
 	case holdForBuffer
+	/// The cushion is back. Resume at normal rate.
 	case resume
+	/// Run slightly fast to recover the live offset.
 	case catchUp(rate: Double)
+	/// Stop running fast.
 	case endCatchUp
+	/// The pinned rung cannot be sustained. Drop the pin and reopen the
+	/// master, keeping the requested height as a ceiling.
 	case dropPin
 }
 
-/// What to ask of the forward buffer on this tick.
-///
-/// Kept apart from PlaybackAction deliberately. Those are mutually exclusive
-/// moves - the player is either holding or catching up, never both - whereas
-/// how much to prefetch is a standing request that coexists with all of them.
-enum CushionDecision: Equatable {
-	case unchanged
-	case claim(seconds: Double)
-	case withdraw
-}
-
-/// Whether the playhead is still standing where it was told to stand.
-///
-/// `place` writes the offset and lets the framework reposition; `restore` also
-/// seeks, because the playhead has been measured at the live edge and an offset
-/// it is already ignoring will not move it.
-///
-/// `easeBack` is neither, and the difference is the whole point of it: it is a
-/// seek and nothing else. No offset is written, because it is only ever sent
-/// for a feed that has already demonstrated it cannot carry one.
-enum StationDecision: Equatable {
-	case unchanged
-	case place(offset: Double)
-	case restore(offset: Double)
-	case easeBack(seconds: Double)
-}
-
-/// Everything the governor needs to know about the player, sampled once per tick.
+/// Everything the governor needs to know about the player, sampled once per
+/// tick by the caller.
 struct PlaybackSample {
+	/// Seconds buffered ahead of the playhead, or nil if not yet known.
 	var bufferedAhead: Double?
+	/// Distance from the live edge in seconds, or nil if not yet known.
 	var behindLive: Double?
+	/// AVPlayerItem.isPlaybackBufferEmpty.
 	var bufferEmpty: Bool
+	/// AVPlayerItem.isPlaybackLikelyToKeepUp.
 	var likelyToKeepUp: Bool
+	/// The player's requested rate. Zero means paused.
 	var rate: Double
+	/// Whether a frame has ever been presented for this item.
 	var started: Bool
+	/// Whether the viewer, rather than this governor, paused playback.
 	var viewerPaused: Bool
+	/// Whether a single rung is currently pinned.
 	var pinned: Bool
+	/// Whether reopening the master is possible at all.
 	var canDropPin: Bool
-	/// The rung actually being delivered, in bits per second, when known. Only
-	/// the cushion policy reads it: it is the one signal that says whether a
-	/// standing buffer request has cost us the ladder.
-	var bitrate: Double? = nil
 }
 
-/// Playback values shared with the Android and web paths where applicable.
+/// The tuning. Every value here has a counterpart in the Android build.
 struct PlaybackTuning {
+	/// Where the stream is meant to sit relative to the live edge. Matches
+	/// TARGET_OFFSET_MS on Android and liveSyncDuration in the web player.
 	var targetOffset = 18.0
+	/// Seconds that must be buffered before playback resumes after a starve.
+	/// Mirrors bufferForPlaybackAfterRebufferMs.
 	var rebufferCushion = 5.0
+	/// Waiting for that cushion cannot be unbounded: a feed that only ever
+	/// trickles would never reach it, and a trickle played badly still beats a
+	/// still frame.
 	var stallResumeCeiling = 12.0
+	/// A pinned rung that has starved this long is the suspect, not the path.
 	var pinnedDegradeAfter = 8.0
+	/// Matches MAX_LIVE_SPEED on Android.
 	var catchUpRate = 1.1
+	/// How far past the target offset to tolerate before helping.
 	var catchUpTrigger = 6.0
+	/// Stop helping once the offset is back within this of the target.
 	var catchUpRelease = 1.5
+	/// Never speed up without this much buffered: spending a cushion that is
+	/// not there is how the ladder collapses.
 	var catchUpMinimumBuffer = 6.0
+	/// Abandon catch-up if the buffer falls this low while running fast.
 	var catchUpAbortBuffer = 3.0
+	/// A cap on one stretch of catch-up, so a feed whose live edge runs away
+	/// from us is not watched at 1.1 forever.
 	var catchUpMaxDuration = 30.0
+	/// And a rest afterwards, for the same reason.
 	var catchUpCooldown = 60.0
-
-	// MARK: The cushion
-	//
-	// How much playable video to keep ahead of the playhead. Android asks for
-	// 20s through DefaultLoadControl and the web path for up to 40s through
-	// maxBufferLength; this path asked for nothing and was measured holding 2s,
-	// which is the whole reason a jitter spike a television rides through is a
-	// visible stall on the desktop.
-	//
-	// Asking for it here has failed once, and the arithmetic of that failure is
-	// the reason these numbers are shaped the way they are. Build 12 requested
-	// 24s of forward buffer while the playhead stands 18s behind the live edge.
-	// There are never 24 seconds of media between a playhead and an edge only 18
-	// seconds away, so the request could not be satisfied at any bitrate - and a
-	// buffer requirement that cannot be satisfied is most cheaply approached by
-	// the bottom rung, forever. The feed sat at 400 kbps.
-	//
-	// A claim strictly inside the window does not have that property: it can
-	// actually be met, and once met the adaptive logic is free again. So the
-	// claim is the offset less some headroom, never a constant, and it is only
-	// made once the ladder has had a moment to settle - a requirement stated
-	// while the throughput estimate is still forming is the other half of what
-	// went wrong.
-	//
-	// And because that is a theory about a framework rather than a measurement
-	// of one, it carries its own escape hatch: a delivered bitrate under the
-	// floor for long enough withdraws the claim for the rest of the session. If
-	// the reasoning above is wrong, the app returns to trickling 2s ahead rather
-	// than pinning itself to the bottom rung.
-
-	/// Left unclaimed between the cushion and the live edge, because the segment
-	/// at the edge is still being published.
-	var cushionHeadroom = 6.0
-	/// A claim smaller than this buys too little to be worth stating.
-	var cushionMinimum = 8.0
-	/// How long the ladder gets to settle before any claim is made.
-	var cushionSettleDelay = 4.0
-	/// Below this, the ladder is suspected of having collapsed.
-	var cushionBitrateFloor = 800_000.0
-	/// For how long, before the claim is blamed and withdrawn.
-	var cushionCollapseAfter = 6.0
-
-	// MARK: Station keeping
-	//
-	// Standing back from the live edge is not a startup action. It is an
-	// invariant, and this path is the only one of the three that did not treat
-	// it as one.
-	//
-	// On Android the target offset is declared on the MediaItem and lives as
-	// long as the item does, so ExoPlayer keeps station continuously - it even
-	// walks back to 18s after seekToDefaultPosition has deliberately put the
-	// playhead on the edge. hls.js does the same from liveSyncDuration. Here the
-	// offset was one write to configuredTimeOffsetFromLive during startup, so
-	// anything that lost it lost it for the entire session: the window was not
-	// yet measurable when the first frame arrived, so no offset was ever
-	// written. That is the 600 kbps / 6.9s / 0.0s report, and it ends where
-	// build 11 ended, because a playhead on the live edge has nothing ahead of
-	// it to prefetch, so the throughput estimate collapses and the ladder goes
-	// down with it. Being on the edge is the cause; a bottom-rung bitrate is the
-	// symptom.
-	//
-	// What this must not do is overrule the startup path. rescueStartup gives
-	// the offset up on purpose, for feeds that produced no first frame at all
-	// with one in force, and build 33 could not tell that decision apart from
-	// never having made one - so it hauled exactly those feeds back to 18s, the
-	// item failed, the page reconnected, and the cycle repeated. A deliberate
-	// surrender is now respected.
-	//
-	// The evidence delay and the cooldown are what keep the rest from becoming a
-	// nervous tic, because a correction costs a reposition and a refill, and the
-	// viewer sees every one of them.
-
-	/// Nearer the live edge than this is not standing back at all.
-	var stationFloor = 3.0
-	/// How long the playhead must be measured continuously off station before it
-	/// is moved. Long enough that a dip which recovers on its own never costs a
-	/// refill.
-	var stationEvidence = 8.0
-	/// The least time between two corrections. A correction is a rebuffer, and a
-	/// feed that cannot hold station would otherwise pay for one on repeat, so
-	/// this is deliberately generous.
-	var stationCooldown = 90.0
-	/// Kept between the offset and the oldest segment in the window, which is
-	/// always the next one to expire.
-	var stationHeadroom = 6.0
-	/// A window shallower than this has no room to stand back in, and a feed
-	/// that publishes one is better served by the framework's own default.
-	var stationMinimumWindow = 10.0
-	/// An offset smaller than this is not worth a reposition.
-	var stationMinimum = 4.0
-
-	// MARK: Easing a rescued feed off the edge
-	//
-	// Respecting the startup rescue is right, and leaving those feeds pinned to
-	// the live edge for the rest of the session is the price that was paid for
-	// it - a reconnect loop traded for a permanent bottom rung and no cushion,
-	// which is exactly the 0.0s behind live the viewer has been staring at.
-	//
-	// Both halves of that trade can be kept, because they are not the same
-	// instrument. What those feeds could not carry is
-	// configuredTimeOffsetFromLive, which AVFoundation takes literally and which
-	// parks the playhead on a segment about to expire; that property is never
-	// written for them again. A plain seek to a mark inside the window the feed
-	// itself publishes makes no such claim on the future - the playhead simply
-	// lands on media that already exists, and
-	// automaticallyPreservesTimeOffsetFromLive holds it roughly there afterwards.
-	//
-	// It is still an intervention on a feed known to be fragile, so it is spent
-	// once per item and only when the harm is measured rather than assumed: a
-	// rung under the floor, continuously, for long enough that a passing dip
-	// cannot trigger it. A rescued feed that is riding the edge and still
-	// delivering several Mbps is left alone, because there is nothing to fix.
-
-	/// A rescued feed delivering less than this is being hurt by where it stands.
-	var easeBitrateFloor = 800_000.0
-	/// For how long, uninterrupted, before that is acted on.
-	var easeEvidence = 10.0
-	/// No window shallower than this is worth stepping back into.
-	var easeMinimumWindow = 20.0
-	/// How far back to step, at most.
-	var easeStep = 8.0
-	/// A step shorter than this buys no prefetch worth the reposition.
-	var easeMinimum = 4.0
 }
 
-/// Pure playback policy: the caller samples AVPlayer, this decides, the caller applies.
+/// Decides, once a second, whether to hold through a starve, whether to run
+/// slightly fast to recover the live offset, and whether a pinned rung has
+/// stopped being worth its pin.
+///
+/// Holds no AppKit or AVFoundation types on purpose: the caller samples the
+/// player, this decides, the caller applies. That keeps the reasoning in one
+/// place and testable without a window, a network or a feed.
 final class PlaybackGovernor {
+
 	var tuning: PlaybackTuning
+
+	/// True while playback is being held for the buffer to refill.
 	private(set) var holding = false
+	/// True while running at the catch-up rate.
 	private(set) var catchingUp = false
+
 	private var holdingSince = 0.0
 	private var catchUpSince = 0.0
 	private var catchUpBlockedUntil = -Double.greatestFiniteMagnitude
 
-	/// The forward buffer currently being asked for, if any.
-	private(set) var cushionClaim: Double?
-	/// Set once the claim has been blamed for a collapsed ladder. Never unset
-	/// for the life of this item: one withdrawal is a diagnosis, a second claim
-	/// after it would be an oscillation.
-	private(set) var cushionAbandoned = false
-	private var startedSince: Double?
-	private var lowBitrateSince: Double?
+	init(tuning: PlaybackTuning = PlaybackTuning()) {
+		self.tuning = tuning
+	}
 
-	/// Since when the playhead has been somewhere other than where it was told
-	/// to stand, or nil if it is on station.
-	private var offStationSince: Double?
-	private var stationBlockedUntil = -Double.greatestFiniteMagnitude
-	/// The last offset asserted, for the caller's telemetry and for tests.
-	private(set) var stationOffset: Double?
-
-	/// Since when a rescued feed has been delivering a bottom rung, or nil if it
-	/// is not, or is not being watched.
-	private var easeSince: Double?
-	/// Whether the one step back available to a rescued feed has been spent.
-	private(set) var easedBack = false
-
-	init(tuning: PlaybackTuning = PlaybackTuning()) { self.tuning = tuning }
-
+	/// A new item. Nothing about the previous one still applies.
 	func reset() {
 		holding = false
 		catchingUp = false
 		catchUpBlockedUntil = -Double.greatestFiniteMagnitude
-		cushionClaim = nil
-		cushionAbandoned = false
-		startedSince = nil
-		lowBitrateSince = nil
-		offStationSince = nil
-		stationBlockedUntil = -Double.greatestFiniteMagnitude
-		stationOffset = nil
-		easeSince = nil
-		easedBack = false
 	}
 
-	func releaseHold() { holding = false }
+	/// The viewer took control. Their intent outranks anything decided here.
+	func releaseHold() {
+		holding = false
+	}
 
+	/// One tick. `now` is a monotonic-enough seconds value supplied by the
+	/// caller, so the decisions stay a pure function of their inputs.
 	func decide(_ s: PlaybackSample, now: Double) -> PlaybackAction {
-		// A viewer pause is absolute. Nothing below may restart it.
 		if s.viewerPaused {
 			holding = false
 			return endCatchUpIfNeeded(now: now, force: true)
 		}
 
 		if holding {
+			// A pin that starves is the pin's fault first. Giving up the whole
+			// native path over a quality preference is far too large a
+			// response, and holding a still frame indefinitely is no better.
 			if s.pinned, s.canDropPin, now - holdingSince > tuning.pinnedDegradeAfter {
 				holding = false
 				return .dropPin
@@ -262,21 +135,9 @@ final class PlaybackGovernor {
 			return .none
 		}
 
-		// AVPlayer can accept play() before a live item is ready and then reach
-		// readyToPlay with rate still at zero. main.swift marks `started` only
-		// after the item has a real video presentation size and is ready, so this
-		// state is no longer preparation: it is a lost initial play request. A
-		// Space press fixed it only because toggleByViewer issued play() again.
-		// Resume here instead. This cannot undo a deliberate pause (handled
-		// above), and it cannot fight a governor hold (handled above as well).
-		if s.started, s.rate == 0 {
-			if catchingUp {
-				catchingUp = false
-				catchUpBlockedUntil = now + tuning.catchUpCooldown
-			}
-			return .resume
-		}
-
+		// Only a genuine starve counts. An item that has not produced a frame
+		// yet is the startup deadline's business, and a paused player has no
+		// forward buffer requirement to fail.
 		if s.started, s.rate > 0, s.bufferEmpty, (s.bufferedAhead ?? 0) < 0.5 {
 			holding = true
 			holdingSince = now
@@ -290,163 +151,15 @@ final class PlaybackGovernor {
 		return steerCatchUp(s, now: now)
 	}
 
-	/// Whether the playhead still stands where it was told to.
-	///
-	/// `applied` is the offset in force on the item, and its sign matters:
-	///
-	///   * zero means none was ever written, because the window was not
-	///     measurable in time. That is recoverable, and recovering it is what
-	///     this function is for.
-	///   * negative means the startup path gave an offset up deliberately, after
-	///     a feed produced no first frame with one in force. That is a finding
-	///     about the feed, not a gap to be filled in, and overruling it is how
-	///     build 33 turned a low rung into a reconnect loop. Those feeds get
-	///     easeRescued below instead, which never writes the offset.
-	///
-	/// `window` is the seekable range the feed currently publishes. It is the
-	/// only other guard that matters: an offset deeper than the window parks the
-	/// playhead on a segment that is about to expire, which is its own failure
-	/// mode and a far worse one than sitting near the edge.
-	func station(
-		_ s: PlaybackSample, window: Double?, applied: Double, now: Double
-	) -> StationDecision {
-		// Before the first frame the offset is placed by the startup path, which
-		// can do it without a reposition because nothing is on screen yet.
-		guard s.started, !s.viewerPaused else {
-			offStationSince = nil
-			easeSince = nil
-			return .unchanged
-		}
-		// A rescued feed has already told us it cannot carry an offset. Hauling it
-		// back with one would fail the item, and the retry would rescue it again.
-		// A seek is not that, and is decided separately.
-		if applied < 0 {
-			offStationSince = nil
-			return easeRescued(s, window: window, now: now)
-		}
-		easeSince = nil
-		guard let window = window, window.isFinite,
-			window >= tuning.stationMinimumWindow
-		else {
-			offStationSince = nil
-			return .unchanged
-		}
-
-		let target = min(tuning.targetOffset, window - tuning.stationHeadroom)
-		guard target >= tuning.stationMinimum else {
-			offStationSince = nil
-			return .unchanged
-		}
-
-		// Nothing in force at all: writing the offset is enough, and the
-		// framework repositions from there.
-		let nothingInForce = applied == 0
-		// An offset is in force and the playhead is on the edge regardless, so it
-		// is being ignored and has to be seeked back. An unmeasurable distance is
-		// not evidence of anything.
-		let ridingTheEdge = !nothingInForce && (s.behindLive ?? Double.infinity) < tuning.stationFloor
-
-		guard nothingInForce || ridingTheEdge else {
-			offStationSince = nil
-			return .unchanged
-		}
-
-		if offStationSince == nil { offStationSince = now }
-		guard let since = offStationSince, now - since >= tuning.stationEvidence,
-			now >= stationBlockedUntil
-		else { return .unchanged }
-
-		offStationSince = nil
-		stationBlockedUntil = now + tuning.stationCooldown
-		stationOffset = target
-		return ridingTheEdge ? .restore(offset: target) : .place(offset: target)
-	}
-
-	/// One step back off the edge for a feed the startup path rescued.
-	///
-	/// Spent once, and only against measured harm. Everything about a rescued
-	/// feed says be careful with it: it is the one kind of feed known to have
-	/// failed to produce a frame under an instruction from this app. So a rung
-	/// above the floor buys no intervention at all, however close to the edge
-	/// the playhead sits, and a window without real room in it buys none either.
-	private func easeRescued(
-		_ s: PlaybackSample, window: Double?, now: Double
-	) -> StationDecision {
-		guard !easedBack else { return .unchanged }
-		guard let window = window, window.isFinite,
-			window >= tuning.easeMinimumWindow
-		else {
-			easeSince = nil
-			return .unchanged
-		}
-		// An unknown rung is not evidence of a collapsed one.
-		guard let bps = s.bitrate, bps < tuning.easeBitrateFloor else {
-			easeSince = nil
-			return .unchanged
-		}
-
-		if easeSince == nil { easeSince = now }
-		guard let since = easeSince, now - since >= tuning.easeEvidence else {
-			return .unchanged
-		}
-
-		let step = min(tuning.easeStep, window / 3)
-		guard step >= tuning.easeMinimum else {
-			easeSince = nil
-			return .unchanged
-		}
-
-		easeSince = nil
-		easedBack = true
-		stationOffset = step
-		return .easeBack(seconds: step)
-	}
-
-	/// How much to prefetch, given how far behind the edge we are standing.
-	///
-	/// `offset` is the offset actually in force on this item, not the target: a
-	/// feed whose window is too shallow to carry one gets no claim at all, which
-	/// is exactly the case where a claim would be unsatisfiable and would cost
-	/// the ladder.
-	func cushion(_ s: PlaybackSample, offset: Double, now: Double) -> CushionDecision {
-		if cushionAbandoned { return .unchanged }
-		// Nothing to prefetch into before the first frame, and a paused viewer is
-		// not waiting on the network.
-		guard s.started, !s.viewerPaused else { return .unchanged }
-		if startedSince == nil { startedSince = now }
-
-		if cushionClaim == nil {
-			guard let since = startedSince,
-				now - since >= tuning.cushionSettleDelay
-			else { return .unchanged }
-			let room = offset - tuning.cushionHeadroom
-			guard offset > 0, room >= tuning.cushionMinimum else { return .unchanged }
-			cushionClaim = room
-			return .claim(seconds: room)
-		}
-
-		// The claim is standing. The only question left is whether it cost us the
-		// ladder, and an unknown bitrate is not evidence that it did.
-		guard let bps = s.bitrate else { return .unchanged }
-		if bps >= tuning.cushionBitrateFloor {
-			lowBitrateSince = nil
-			return .unchanged
-		}
-		if lowBitrateSince == nil { lowBitrateSince = now }
-		guard let low = lowBitrateSince,
-			now - low > tuning.cushionCollapseAfter
-		else { return .unchanged }
-		cushionClaim = nil
-		cushionAbandoned = true
-		lowBitrateSince = nil
-		return .withdraw
-	}
+	// MARK: - Catch-up
 
 	private func steerCatchUp(_ s: PlaybackSample, now: Double) -> PlaybackAction {
 		guard s.started, s.rate > 0,
 			let behind = s.behindLive,
 			let ahead = s.bufferedAhead
-		else { return endCatchUpIfNeeded(now: now, force: false) }
+		else {
+			return endCatchUpIfNeeded(now: now, force: false)
+		}
 
 		if catchingUp {
 			let recovered = behind <= tuning.targetOffset + tuning.catchUpRelease
@@ -455,12 +168,15 @@ final class PlaybackGovernor {
 			if recovered || cushionGone || tooLong {
 				return endCatchUpIfNeeded(now: now, force: true)
 			}
+			// Already at rate. Re-asserting it every second would fight the
+			// framework's own recovery for no gain.
 			return .none
 		}
 
 		if now < catchUpBlockedUntil { return .none }
 		if behind > tuning.targetOffset + tuning.catchUpTrigger,
-			ahead >= tuning.catchUpMinimumBuffer {
+			ahead >= tuning.catchUpMinimumBuffer
+		{
 			catchingUp = true
 			catchUpSince = now
 			return .catchUp(rate: tuning.catchUpRate)
@@ -469,7 +185,8 @@ final class PlaybackGovernor {
 	}
 
 	private func endCatchUpIfNeeded(now: Double, force: Bool) -> PlaybackAction {
-		guard catchingUp, force else { return .none }
+		guard catchingUp else { return .none }
+		if !force { return .none }
 		catchingUp = false
 		catchUpBlockedUntil = now + tuning.catchUpCooldown
 		return .endCatchUp

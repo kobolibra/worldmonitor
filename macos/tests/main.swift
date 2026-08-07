@@ -5,35 +5,27 @@ func check(_ label: String, _ actual: PlaybackAction, _ expected: PlaybackAction
 	if actual == expected { print("ok    \(label)") }
 	else { print("FAIL  \(label): expected \(expected), got \(actual)"); failures += 1 }
 }
-func check(_ label: String, _ actual: CushionDecision, _ expected: CushionDecision) {
-	if actual == expected { print("ok    \(label)") }
-	else { print("FAIL  \(label): expected \(expected), got \(actual)"); failures += 1 }
-}
-func check(_ label: String, _ actual: StationDecision, _ expected: StationDecision) {
-	if actual == expected { print("ok    \(label)") }
-	else { print("FAIL  \(label): expected \(expected), got \(actual)"); failures += 1 }
-}
 func check(_ label: String, _ passed: Bool) {
 	if passed { print("ok    \(label)") }
 	else { print("FAIL  \(label)"); failures += 1 }
 }
 func sample(ahead: Double? = 10, behind: Double? = 18, empty: Bool = false,
 	keepUp: Bool = true, rate: Double = 1, started: Bool = true,
-	viewerPaused: Bool = false, pinned: Bool = false, canDropPin: Bool = true,
-	bitrate: Double? = nil) -> PlaybackSample {
+	viewerPaused: Bool = false, pinned: Bool = false, canDropPin: Bool = true) -> PlaybackSample {
 	PlaybackSample(bufferedAhead: ahead, behindLive: behind, bufferEmpty: empty,
 		likelyToKeepUp: keepUp, rate: rate, started: started,
-		viewerPaused: viewerPaused, pinned: pinned, canDropPin: canDropPin,
-		bitrate: bitrate)
+		viewerPaused: viewerPaused, pinned: pinned, canDropPin: canDropPin)
 }
 
 let tuning = PlaybackTuning()
-print("target \(tuning.targetOffset)s, resume cushion \(tuning.rebufferCushion)s, catch-up \(tuning.catchUpRate)x")
-print("cushion \(tuning.targetOffset - tuning.cushionHeadroom)s after \(tuning.cushionSettleDelay)s, floor \(tuning.cushionBitrateFloor)")
-print("station: under \(tuning.stationFloor)s behind for \(tuning.stationEvidence)s, cooldown \(tuning.stationCooldown)s")
-print("ease: under \(tuning.easeBitrateFloor) for \(tuning.easeEvidence)s, step \(tuning.easeStep)s, window \(tuning.easeMinimumWindow)s\n")
+print("target \(tuning.targetOffset)s, rebuffer cushion \(tuning.rebufferCushion)s, catch-up \(tuning.catchUpRate)x")
+print("catch-up trigger +\(tuning.catchUpTrigger)s, release within \(tuning.catchUpRelease)s, min buffer \(tuning.catchUpMinimumBuffer)s\n")
+
+// ---- baseline ----
 
 do { let g=PlaybackGovernor(); check("a healthy tick changes nothing",g.decide(sample(),now:0),.none) }
+
+// ---- hold-for-buffer ----
 
 do {
 	let g=PlaybackGovernor()
@@ -55,8 +47,8 @@ do {
 	check("and is never held",!g.holding)
 }
 
-// Regression: this is the exact state behind “switch to Native, then press
-// Space once”. The item has a presentation size and main.swift has marked it
+// Regression: this is the exact state behind "switch to Native, then press
+// Space once". The item has a presentation size and main.swift has marked it
 // started, but AVPlayer's early play() request left rate at zero.
 do {
 	let g=PlaybackGovernor()
@@ -69,6 +61,8 @@ do {
 	check("a starve before the first frame is not a starve",g.decide(sample(ahead:0,empty:true,keepUp:false,started:false),now:400),.none)
 }
 
+// ---- catch-up ----
+
 do {
 	let g=PlaybackGovernor()
 	check("30s behind starts the catch-up",g.decide(sample(behind:30),now:500),.catchUp(rate:1.1))
@@ -80,7 +74,7 @@ do {
 
 do { let g=PlaybackGovernor(); check("a thin buffer never speeds up",g.decide(sample(ahead:4,behind:40),now:600),.none); check("nothing was started",!g.catchingUp) }
 
-do { let g=PlaybackGovernor(); _=g.decide(sample(behind:30),now:700); check("a collapsing cushion abandons it",g.decide(sample(ahead:2,behind:30),now:702),.endCatchUp) }
+do { let g=PlaybackGovernor(); _=g.decide(sample(behind:30),now:700); check("a collapsing buffer abandons it",g.decide(sample(ahead:2,behind:30),now:702),.endCatchUp) }
 
 do { let g=PlaybackGovernor(); _=g.decide(sample(behind:60),now:800); check("still helping at 25s",g.decide(sample(behind:55),now:825),.none); check("the cap ends one stretch",g.decide(sample(behind:55),now:831),.endCatchUp) }
 
@@ -88,10 +82,12 @@ do {
 	let g=PlaybackGovernor(); _=g.decide(sample(behind:30),now:900)
 	check("a starve interrupts the catch-up",g.decide(sample(ahead:0,behind:30,empty:true,keepUp:false),now:901),.holdForBuffer)
 	check("the catch-up is off",!g.catchingUp)
-	check("the cushion returns",g.decide(sample(ahead:8,behind:30),now:902),.resume)
+	check("the buffer returns",g.decide(sample(ahead:8,behind:30),now:902),.resume)
 	check("but not straight back to 1.1x",g.decide(sample(behind:30),now:903),.none)
 	check("only after the cooldown",g.decide(sample(behind:30),now:965),.catchUp(rate:1.1))
 }
+
+// ---- drop-pin ----
 
 do {
 	let g=PlaybackGovernor()
@@ -109,7 +105,11 @@ do {
 	check("and then plays anyway",g.decide(sample(ahead:0,keepUp:false,pinned:true,canDropPin:false),now:1313),.resume)
 }
 
+// ---- reset ----
+
 do { let g=PlaybackGovernor(); _=g.decide(sample(behind:30),now:1400); _=g.decide(sample(behind:19),now:1401); g.reset(); check("reset clears the cooldown",g.decide(sample(behind:30),now:1402),.catchUp(rate:1.1)) }
+
+// ---- shallow target ----
 
 do {
 	var shallow=PlaybackTuning(); shallow.targetOffset=6; let g=PlaybackGovernor(tuning:shallow)
@@ -118,272 +118,24 @@ do {
 	check("and 7s ends it",g.decide(sample(behind:7),now:1502),.endCatchUp)
 }
 
+// ---- edge cases ----
+
 do { let g=PlaybackGovernor(); check("an unknown offset does nothing",g.decide(sample(ahead:nil,behind:nil),now:1600),.none) }
 
-// ---- the cushion ----
-
 do {
 	let g=PlaybackGovernor()
-	check("no claim before the ladder has settled",g.cushion(sample(),offset:18,now:2000),.unchanged)
-	check("nor a moment too early",g.cushion(sample(),offset:18,now:2003),.unchanged)
-	check("then the window less the headroom",g.cushion(sample(),offset:18,now:2004),.claim(seconds:12))
-	check("and it is not restated every tick",g.cushion(sample(bitrate:3_000_000),offset:18,now:2005),.unchanged)
-	check("the claim is remembered",g.cushionClaim == 12)
+	check("likelyToKeepUp is enough to resume",g.decide(sample(ahead:0,empty:true,keepUp:true),now:1700),.holdForBuffer)
+	check("and resumes immediately",g.decide(sample(ahead:0,keepUp:true),now:1701),.resume)
 }
 
-// The build 12 disaster, prevented at the source: a feed publishing a window
-// too shallow to stand 18s back gets a small offset from applyLiveOffset, and
-// must never be asked to prefetch more than that window can hold.
-do {
-	let g=PlaybackGovernor()
-	_=g.cushion(sample(),offset:12,now:2100)
-	check("a 12s offset leaves too little to claim",g.cushion(sample(),offset:12,now:2110),.unchanged)
-	check("so nothing is claimed at all",g.cushionClaim == nil)
-}
+// ---- releaseHold ----
 
 do {
 	let g=PlaybackGovernor()
-	_=g.cushion(sample(),offset:0,now:2200)
-	check("an unmeasured window is never claimed against",g.cushion(sample(),offset:0,now:2210),.unchanged)
-}
-
-do {
-	let g=PlaybackGovernor()
-	check("nothing is claimed before the first frame",g.cushion(sample(started:false),offset:18,now:2300),.unchanged)
-	check("nor while the viewer has paused",g.cushion(sample(viewerPaused:true),offset:18,now:2320),.unchanged)
-}
-
-do {
-	let g=PlaybackGovernor()
-	_=g.cushion(sample(),offset:18,now:2400)
-	_=g.cushion(sample(),offset:18,now:2410)
-	check("the claim stands",g.cushionClaim == 12)
-	check("a brief dip is not a collapse",g.cushion(sample(bitrate:400_000),offset:18,now:2411),.unchanged)
-	check("a recovery clears the suspicion",g.cushion(sample(bitrate:3_000_000),offset:18,now:2413),.unchanged)
-	check("so a later dip starts over",g.cushion(sample(bitrate:400_000),offset:18,now:2414),.unchanged)
-	check("and is still not a collapse",g.cushion(sample(bitrate:400_000),offset:18,now:2419),.unchanged)
-	check("the claim survived",g.cushionClaim == 12)
-}
-
-do {
-	let g=PlaybackGovernor()
-	_=g.cushion(sample(),offset:18,now:2500)
-	_=g.cushion(sample(),offset:18,now:2510)
-	_=g.cushion(sample(bitrate:400_000),offset:18,now:2511)
-	check("a sustained collapse withdraws the claim",g.cushion(sample(bitrate:400_000),offset:18,now:2518),.withdraw)
-	check("and it is given up for good",g.cushionAbandoned)
-	check("a healthy rung does not win it back",g.cushion(sample(bitrate:3_000_000),offset:18,now:2600),.unchanged)
-	check("nothing is claimed again",g.cushionClaim == nil)
-}
-
-do {
-	let g=PlaybackGovernor()
-	_=g.cushion(sample(),offset:18,now:2700)
-	_=g.cushion(sample(),offset:18,now:2710)
-	check("an unknown bitrate is not evidence",g.cushion(sample(bitrate:nil),offset:18,now:2711),.unchanged)
-	check("and the claim is kept",g.cushionClaim == 12)
-}
-
-do {
-	let g=PlaybackGovernor()
-	_=g.cushion(sample(),offset:18,now:2800)
-	_=g.cushion(sample(),offset:18,now:2810)
-	g.reset()
-	check("a new item starts with no claim",g.cushionClaim == nil)
-	check("and has to settle again",g.cushion(sample(),offset:18,now:2811),.unchanged)
-	check("then claims afresh",g.cushion(sample(),offset:18,now:2816),.claim(seconds:12))
-}
-
-// ---- station keeping ----
-
-do {
-	let g=PlaybackGovernor()
-	check("standing 18s back is exactly right",g.station(sample(behind:18),window:30,applied:18,now:3000),.unchanged)
-	check("and 8s back is still not the edge",g.station(sample(behind:8),window:30,applied:18,now:3001),.unchanged)
-}
-
-// The build 31 report, verbatim: 600 kbps, 6.9s buffered, 0.0s behind live.
-// Nothing was in force because the window was not measurable when the first
-// frame arrived, and before station keeping that was permanent for the whole
-// session - which is why the ladder was on the floor.
-do {
-	let g=PlaybackGovernor()
-	let s=sample(ahead:6.9,behind:0,bitrate:600_000)
-	check("riding the edge is noticed but not acted on at once",g.station(s,window:30,applied:0,now:3100),.unchanged)
-	check("nor a moment too early",g.station(s,window:30,applied:0,now:3107),.unchanged)
-	check("then the offset is put back",g.station(s,window:30,applied:0,now:3108),.place(offset:18))
-	check("and remembered",g.stationOffset == 18)
-}
-
-// An offset is in force and the playhead is on the edge regardless, so writing
-// it again is not enough - it has to be seeked back.
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0.5)
-	check("an ignored offset waits for evidence too",g.station(s,window:30,applied:18,now:3200),.unchanged)
-	check("and then the playhead is moved",g.station(s,window:30,applied:18,now:3208),.restore(offset:18))
-}
-
-// The build 33 regression, and the reason this file's 88 passing checks did not
-// catch it: the assertion here used to demand a .place, on the reasoning that a
-// rescued item must not be left on the edge. That reasoning was wrong. A
-// negative `applied` is not an offset that went missing, it is rescueStartup
-// reporting that this feed produced no first frame with one in force - so
-// hauling it back to 18s failed the item, the page reconnected, startup rescued
-// it again, and the viewer got a permanent “interrupted, reconnecting” cycle.
-// A low rung is watchable. That was not.
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0)
-	_=g.station(s,window:30,applied:-1,now:3300)
-	check("a rescued feed is not hauled back",g.station(s,window:30,applied:-1,now:3310),.unchanged)
-	check("and no offset is asserted behind its back",g.stationOffset == nil)
-	check("even long after the evidence would have been enough",g.station(s,window:30,applied:-1,now:3380),.unchanged)
-}
-
-// A window that cannot hold the full target still gets what it can hold.
-do {
-	let g=PlaybackGovernor()
-	_=g.station(sample(behind:0),window:20,applied:0,now:3400)
-	check("a 20s window gives up 6s of headroom",g.station(sample(behind:0),window:20,applied:0,now:3408),.place(offset:14))
-}
-
-do {
-	let g=PlaybackGovernor()
-	_=g.station(sample(behind:0),window:8,applied:0,now:3500)
-	check("an 8s window has nowhere to stand back in",g.station(sample(behind:0),window:8,applied:0,now:3520),.unchanged)
-	check("so nothing is asserted",g.stationOffset == nil)
-	check("an unmeasurable window is left alone",g.station(sample(behind:0),window:nil,applied:0,now:3521),.unchanged)
-}
-
-do {
-	let g=PlaybackGovernor()
-	_=g.station(sample(behind:0,started:false),window:30,applied:0,now:3600)
-	check("before the first frame this is the startup path's job",g.station(sample(behind:0,started:false),window:30,applied:0,now:3620),.unchanged)
-	_=g.station(sample(behind:0,viewerPaused:true),window:30,applied:0,now:3630)
-	check("a paused viewer is never seeked",g.station(sample(behind:0,viewerPaused:true),window:30,applied:0,now:3650),.unchanged)
-}
-
-do {
-	let g=PlaybackGovernor()
-	_=g.station(sample(behind:nil),window:30,applied:18,now:3700)
-	check("an unmeasurable distance is not evidence",g.station(sample(behind:nil),window:30,applied:18,now:3720),.unchanged)
-}
-
-// Evidence has to be continuous. A dip to the edge that recovers on its own is
-// not worth a rebuffer.
-do {
-	let g=PlaybackGovernor()
-	_=g.station(sample(behind:1),window:30,applied:18,now:3800)
-	_=g.station(sample(behind:1),window:30,applied:18,now:3802)
-	check("a recovery clears the evidence",g.station(sample(behind:17),window:30,applied:18,now:3803),.unchanged)
-	_=g.station(sample(behind:1),window:30,applied:18,now:3804)
-	check("so the clock starts over",g.station(sample(behind:1),window:30,applied:18,now:3806),.unchanged)
-	check("and only then is it moved",g.station(sample(behind:1),window:30,applied:18,now:3812),.restore(offset:18))
-}
-
-// Every correction costs a refill, so they are rate limited - and standing
-// evidence throughout the cooldown must not shorten it.
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0)
-	_=g.station(s,window:30,applied:18,now:3900)
-	check("the first correction happens",g.station(s,window:30,applied:18,now:3908),.restore(offset:18))
-	check("a second one is not attempted straight away",g.station(s,window:30,applied:18,now:3920),.unchanged)
-	check("nor part way through the cooldown",g.station(s,window:30,applied:18,now:3950),.unchanged)
-	check("nor a moment before it is up",g.station(s,window:30,applied:18,now:3997),.unchanged)
-	check("but the feed is not abandoned either",g.station(s,window:30,applied:18,now:3998),.restore(offset:18))
-}
-
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0)
-	_=g.station(s,window:30,applied:18,now:4000)
-	_=g.station(s,window:30,applied:18,now:4008)
-	g.reset()
-	check("a new item forgets the correction",g.stationOffset == nil)
-	_=g.station(s,window:30,applied:18,now:4009)
-	check("and is not held back by the old cooldown",g.station(s,window:30,applied:18,now:4017),.restore(offset:18))
-}
-
-// ---- easing a rescued feed off the edge ----
-//
-// The other half of the build 33 trade. Respecting the rescue stopped the
-// reconnect loop and left those feeds pinned to the live edge, which is where
-// the ladder collapses: 0.0s behind live and a bottom rung, session after
-// session. A seek is not the instrument that failed - configuredTimeOffsetFromLive
-// is - so a seek is allowed, once, and only where the harm has been measured.
-
-do {
-	let g=PlaybackGovernor()
-	let s=sample(ahead:2,behind:0,bitrate:600_000)
-	check("a rescued feed on the floor waits out the evidence",g.station(s,window:30,applied:-1,now:5000),.unchanged)
-	check("nor a moment too early",g.station(s,window:30,applied:-1,now:5009),.unchanged)
-	check("then it is eased back, without an offset",g.station(s,window:30,applied:-1,now:5010),.easeBack(seconds:8))
-	check("and the step is spent",g.easedBack)
-	check("a second step is never taken",g.station(s,window:30,applied:-1,now:5200),.unchanged)
-}
-
-// A rescued feed delivering several Mbps from the edge is not being hurt by
-// standing there, and an intervention on a feed known to be fragile has to be
-// paid for by something.
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0,bitrate:3_000_000)
-	_=g.station(s,window:30,applied:-1,now:5300)
-	check("a healthy rescued feed is left exactly where it is",g.station(s,window:30,applied:-1,now:5320),.unchanged)
-	check("an unknown rung is not evidence either",g.station(sample(behind:0,bitrate:nil),window:30,applied:-1,now:5321),.unchanged)
-	check("and nothing was spent",!g.easedBack)
-}
-
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0,bitrate:600_000)
-	_=g.station(s,window:14,applied:-1,now:5400)
-	check("a shallow window is no place to step back into",g.station(s,window:14,applied:-1,now:5420),.unchanged)
-	check("nor an unmeasurable one",g.station(s,window:nil,applied:-1,now:5421),.unchanged)
-	check("so the step is still available",!g.easedBack)
-}
-
-// The step never reaches for more than a third of the window, because the
-// oldest segment in it is always the next one to expire.
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0,bitrate:400_000)
-	_=g.station(s,window:21,applied:-1,now:5500)
-	check("a 21s window is stepped back into by a third",g.station(s,window:21,applied:-1,now:5510),.easeBack(seconds:7))
-}
-
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0,bitrate:600_000)
-	_=g.station(s,window:30,applied:-1,now:5600)
-	check("a rung recovering on its own clears the evidence",g.station(sample(behind:0,bitrate:3_000_000),window:30,applied:-1,now:5605),.unchanged)
-	_=g.station(s,window:30,applied:-1,now:5606)
-	check("so the clock starts over",g.station(s,window:30,applied:-1,now:5614),.unchanged)
-	check("and only then is it eased",g.station(s,window:30,applied:-1,now:5616),.easeBack(seconds:8))
-}
-
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0,bitrate:600_000)
-	_=g.station(s,window:30,applied:-1,now:5700)
-	_=g.station(s,window:30,applied:-1,now:5711)
-	check("the step was taken",g.easedBack)
-	g.reset()
-	check("a new item gets its own",!g.easedBack)
-	_=g.station(s,window:30,applied:-1,now:5712)
-	check("and takes it on the same terms",g.station(s,window:30,applied:-1,now:5723),.easeBack(seconds:8))
-}
-
-do {
-	let g=PlaybackGovernor()
-	let s=sample(behind:0,started:false,bitrate:600_000)
-	_=g.station(s,window:30,applied:-1,now:5800)
-	check("before the first frame a rescued feed is still the startup path's",g.station(s,window:30,applied:-1,now:5820),.unchanged)
-	let paused=sample(behind:0,viewerPaused:true,bitrate:600_000)
-	_=g.station(paused,window:30,applied:-1,now:5830)
-	check("and a paused viewer is never seeked",g.station(paused,window:30,applied:-1,now:5850),.unchanged)
+	_=g.decide(sample(ahead:0,empty:true,keepUp:false),now:1800)
+	check("a hold is in place",g.holding)
+	g.releaseHold()
+	check("releaseHold clears it",!g.holding)
 }
 
 print("")
