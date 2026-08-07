@@ -148,6 +148,13 @@ final class PlaybackGovernor {
 			return .holdForBuffer
 		}
 
+		// The item has presented a frame but the player's rate is zero, and
+		// the viewer did not ask for that. The initial play() request was lost
+		// — AVPlayer does this occasionally — and the fix is to ask again.
+		if s.started, s.rate == 0 {
+			return .resume
+		}
+
 		return steerCatchUp(s, now: now)
 	}
 
