@@ -124,8 +124,8 @@ do { let g=PlaybackGovernor(); check("an unknown offset does nothing",g.decide(s
 
 do {
 	let g=PlaybackGovernor()
-	check("likelyToKeepUp is enough to resume",g.decide(sample(ahead:0,empty:true,keepUp:true),now:1700),.holdForBuffer)
-	check("and resumes immediately",g.decide(sample(ahead:0,keepUp:true),now:1701),.resume)
+	check("a transient empty buffer with keepUp is not a starve",g.decide(sample(ahead:0,empty:true,keepUp:true),now:1700),.none)
+	check("the player is not held",!g.holding)
 }
 
 // ---- releaseHold ----

@@ -135,10 +135,12 @@ final class PlaybackGovernor {
 			return .none
 		}
 
-		// Only a genuine starve counts. An item that has not produced a frame
-		// yet is the startup deadline's business, and a paused player has no
-		// forward buffer requirement to fail.
-		if s.started, s.rate > 0, s.bufferEmpty, (s.bufferedAhead ?? 0) < 0.5 {
+		// Only a genuine starve counts: the buffer is empty and the player
+		// itself does not think it can keep up. AVFoundation's own assessment
+		// is the more reliable signal — a transient bufferEmpty while
+		// likelyToKeepUp is true is just a segment arriving, not a reason to
+		// pause and force a full rebuffer.
+		if s.started, s.rate > 0, s.bufferEmpty, !s.likelyToKeepUp, (s.bufferedAhead ?? 0) < 0.5 {
 			holding = true
 			holdingSince = now
 			if catchingUp {

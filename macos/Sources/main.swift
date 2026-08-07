@@ -161,25 +161,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		web.load(URLRequest(url: homeURL))
 	}
 
-	// MARK: - App lifecycle
-
-	/// Pause playback when the user switches away. Without this, AVPlayer may
-	/// keep running in the background, the playhead drifts to the live edge,
-	/// and on return the framework has to recover the offset by playing faster
-	/// or skipping — both of which spend the buffer that was already thinning.
-	func applicationDidResignActive(_ notification: Notification) {
-		guard let p = player, !userPaused else { return }
-		p.pause()
-	}
-
-	/// Resume when the user returns. A simple play() is enough: the offset was
-	/// never lost, so the playhead is still roughly where it was left, and the
-	/// buffer re-forms around it.
-	func applicationDidBecomeActive(_ notification: Notification) {
-		guard let p = player, !userPaused else { return }
-		p.play()
-	}
-
 	// MARK: - Web view
 
 	private func buildWebView() {
