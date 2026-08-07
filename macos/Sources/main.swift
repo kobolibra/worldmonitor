@@ -163,6 +163,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		buildWebView()
 		buildWindow()
 		stayAwake()
+
+		// Pause the player before the app resigns active, so the playhead
+		// does not advance while Core Animation has paused the AVPlayerLayer
+		// display link. If the player keeps running, the playhead moves
+		// seconds ahead of the last displayed frame, and when the display
+		// link resumes the picture jumps forward — the visible stutter.
+		//
+		// willResignActive is used, not didResignActive, so the pause
+		// happens while the display link is still running and the last
+		// frame is properly held on screen.
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(willResignActive),
+			name: NSApplication.willResignActiveNotification,
+			object: nil)
+
 		web.load(URLRequest(url: homeURL))
 	}
 
@@ -1225,20 +1241,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
 	// MARK: - Lifecycle
 
-	func applicationDidResignActive(_ notification: Notification) {
-		// Do nothing. Pausing the player causes a visual stutter when the
-		// window loses focus, and the player is not rendered in the
-		// background anyway — AVPlayerLayer stops drawing when the window
-		// is not key. Any brief starvation is handled by the governor.
+	@objc private func willResignActive(_ notification: Notification) {
+		// Pause the player while the display link is still running.
+		// The last frame is held on screen and the playhead stops.
+		// When the display link resumes, the playhead has not moved
+		// and the next frame is the correct one — no jump, no stutter.
+		//
+		// Pausing in didResignActive is too late: by then the display
+		// link is already paused and the pause() call races with the
+		// layer teardown, producing a visible flicker.
+		player?.pause()
 	}
 
 	func applicationDidBecomeActive(_ notification: Notification) {
-		guard let it = item, everPlayed, !userPaused else { return }
+		guard let p = player, let it = item, everPlayed, !userPaused else { return }
 
-		// While the window was inactive the seekable range kept growing.
-		// The effective offset is now larger than the configured one, and
-		// the framework will seek to restore it. Resetting the configured
-		// offset to the current effective offset prevents that seek.
+		// While the player was paused the seekable range kept growing.
+		// The effective offset is now larger than the configured one.
+		// Reset the configured offset to the current effective offset
+		// so the framework sees no drift to correct and does not seek.
 		if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
 			let co = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
 			if co.isFinite, co > 0 {
@@ -1248,9 +1269,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		}
 
 		governor.releaseHold()
-		// The player was never paused, so there is nothing to resume.
-		// The target offset is deliberately not restored here — the
+		p.play()
+		// The target offset is deliberately not restored here. The
 		// true-latency catch-up in tick() will walk it back gradually.
+		// A delayed restore would cause a seek and the stutter symptom.
+		//
+		// This is the critical difference from the broken build 42:
+		// the player was paused before the display link dropped, so
+		// the playhead has not moved and the frame does not jump.
+		// The offset reset prevents the framework from seeking, and
+		// play() resumes from exactly where it stopped.
 	}
 
 	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
