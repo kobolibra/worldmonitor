@@ -146,6 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	/// player's hls.js configuration and TARGET_OFFSET_MS on Android, so all
 	/// three paths feel alike. Kept in one place, in the tuning.
 	private var targetOffset: Double { governor.tuning.targetOffset }
+	/// The offset currently configured on the player item. May differ from
+	/// targetOffset when the true-latency catch-up is active or when the
+	/// offset was reset to avoid a seek. Changed gradually, never by jumps,
+	/// so the framework adjusts the playhead without seeking.
+	private var currentConfiguredOffset = 18.0
 	/// A feed that has produced nothing at all by now is not going to.
 	private let startupDeadline = 20.0
 	/// A wall clock difference larger than this is not a latency, it is a clock
@@ -323,6 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		startedAt = Date()
 		userPaused = false
 		governor.reset()
+		currentConfiguredOffset = targetOffset
 
 		let asset = AVURLAsset(url: u)
 		let playerItem = AVPlayerItem(asset: asset)
@@ -758,26 +764,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		let wall = trueLatency(it)
 
 		// ---- True-latency catch-up ----
-		// The governor's catch-up steers on the edge distance, which the
-		// framework keeps at the target offset. When the CDN is behind the
-		// actual broadcast, the true latency can be much larger than the
-		// edge distance, and the governor never sees a reason to act.
-		// This block reduces the target offset when the true latency is
-		// excessive, letting the framework reposition the playhead closer
-		// to the edge and shrinking the end-to-end latency.
+		// The governor can only steer on the edge distance, which the
+		// framework keeps at currentConfiguredOffset. When the CDN is
+		// behind the actual broadcast, the true latency is larger than
+		// the edge distance and the governor never sees a reason to act.
+		//
+		// This block walks currentConfiguredOffset down toward the live
+		// edge when the true latency is excessive, and walks it back up
+		// toward targetOffset when the latency is back to normal. Every
+		// step is at most 0.5 s so the framework adjusts the playhead
+		// gradually without seeking.
 		if let wall = wall, let ahead = ahead,
-		   wall > targetOffset + governor.tuning.catchUpTrigger,
-		   ahead >= governor.tuning.catchUpMinimumBuffer
+		   wall > currentConfiguredOffset + governor.tuning.catchUpTrigger,
+		   ahead >= governor.tuning.catchUpMinimumBuffer,
+		   currentConfiguredOffset > 6.0
 		{
-			let excess = wall - targetOffset
-			let newOffset = max(6.0, targetOffset - excess * 0.3)
-			it.configuredTimeOffsetFromLive = CMTime(seconds: newOffset, preferredTimescale: 600)
-		} else if wall == nil || (wall! <= targetOffset + governor.tuning.catchUpRelease) {
-			// Restore the target offset once the latency is back to normal.
-			// Also restore when there is no true-latency signal at all, so a
-			// feed that stops publishing the tag does not stay on a reduced
-			// offset forever.
-			it.configuredTimeOffsetFromLive = CMTime(seconds: targetOffset, preferredTimescale: 600)
+			currentConfiguredOffset = max(6.0, currentConfiguredOffset - 0.5)
+			it.configuredTimeOffsetFromLive = CMTime(seconds: currentConfiguredOffset, preferredTimescale: 600)
+		} else if currentConfiguredOffset < targetOffset - 0.1 {
+			// Walk back toward targetOffset. Only when there is no reason
+			// to stay close to the edge — either the true latency is fine
+			// or the feed does not publish the tag.
+			if wall == nil || wall! <= currentConfiguredOffset + governor.tuning.catchUpRelease {
+				currentConfiguredOffset = min(targetOffset, currentConfiguredOffset + 0.5)
+				it.configuredTimeOffsetFromLive = CMTime(seconds: currentConfiguredOffset, preferredTimescale: 600)
+			}
 		}
 
 		// A dropped pin reopens the player, which means the item this tick was
@@ -854,20 +865,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			// and does not seek — which would cause the buffer measurement
 			// to jump.
 			if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
-				let currentOffset = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
-				if currentOffset.isFinite, currentOffset > 0 {
-					it.configuredTimeOffsetFromLive = CMTime(seconds: currentOffset, preferredTimescale: 600)
+				let co = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
+				if co.isFinite, co > 0 {
+					currentConfiguredOffset = co
+					it.configuredTimeOffsetFromLive = CMTime(seconds: co, preferredTimescale: 600)
 				}
 			}
 			p.play()
 			send(["t": "playing"])
-			// Restore the target offset after the player has started.
-			// The framework will gradually reposition the playhead — no
-			// sudden jump, no repeated seconds.
-			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-				guard let self = self, let it = self.item else { return }
-				it.configuredTimeOffsetFromLive = CMTime(seconds: self.targetOffset, preferredTimescale: 600)
-			}
+			// The target offset is deliberately not restored here. The
+			// true-latency catch-up in tick() will walk it back gradually.
+			// A delayed restore would cause a seek and the "repeating
+			// seconds" symptom.
 			return false
 
 		case .catchUp(let rate):
@@ -1217,41 +1226,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	// MARK: - Lifecycle
 
 	func applicationDidResignActive(_ notification: Notification) {
-		// Match Android's onStop(): pause the player but do not release it.
-		// The player continues to buffer while paused, and pausing prevents
-		// the system from starving it while the window is not key.
-		//
-		// Without this, the player keeps playing in the background, macOS
-		// throttles the app, the player starves, and switching back shows a
-		// frozen picture while it recovers.
-		player?.pause()
+		// Do nothing. Pausing the player causes a visual stutter when the
+		// window loses focus, and the player is not rendered in the
+		// background anyway — AVPlayerLayer stops drawing when the window
+		// is not key. Any brief starvation is handled by the governor.
 	}
 
 	func applicationDidBecomeActive(_ notification: Notification) {
-		guard let p = player, let it = item, everPlayed, !userPaused else { return }
+		guard let it = item, everPlayed, !userPaused else { return }
 
-		// Prevent the framework from seeking to restore the configured
-		// offset. While the player was paused the seekable range end kept
-		// moving forward, so the effective offset is now larger than the
-		// configured one. Reset the configured offset to the current
-		// effective offset so the framework sees no drift to correct.
+		// While the window was inactive the seekable range kept growing.
+		// The effective offset is now larger than the configured one, and
+		// the framework will seek to restore it. Resetting the configured
+		// offset to the current effective offset prevents that seek.
 		if let seekable = it.seekableTimeRanges.last?.timeRangeValue {
-			let currentOffset = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
-			if currentOffset.isFinite, currentOffset > 0 {
-				it.configuredTimeOffsetFromLive = CMTime(seconds: currentOffset, preferredTimescale: 600)
+			let co = CMTimeGetSeconds(CMTimeSubtract(CMTimeRangeGetEnd(seekable), it.currentTime()))
+			if co.isFinite, co > 0 {
+				currentConfiguredOffset = co
+				it.configuredTimeOffsetFromLive = CMTime(seconds: co, preferredTimescale: 600)
 			}
 		}
 
 		governor.releaseHold()
-		p.play()
-
-		// After the player has started, restore the target offset. The
-		// framework will gradually reposition the playhead — no sudden
-		// jump, no repeated seconds.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-			guard let self = self, let it = self.item else { return }
-			it.configuredTimeOffsetFromLive = CMTime(seconds: self.targetOffset, preferredTimescale: 600)
-		}
+		// The player was never paused, so there is nothing to resume.
+		// The target offset is deliberately not restored here — the
+		// true-latency catch-up in tick() will walk it back gradually.
 	}
 
 	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
