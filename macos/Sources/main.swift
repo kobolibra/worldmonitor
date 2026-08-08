@@ -354,9 +354,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		// spending the cushion is not keeping it, it is never having one: without
 		// this the player drifts up to the live edge and stays there, with
 		// nothing ahead of it to hold and nothing to prefetch into.
-		playerItem.automaticallyPreservesTimeOffsetFromLive = true
+		//
+		// The offset MUST be set before enabling preservation. Reversing the
+		// order causes AVFoundation to lock in a default offset (3× target
+		// duration, ~30 s for a 10 s segment) and ignore the configured value,
+		// which is why the macOS app was 10+ seconds behind Android.
 		playerItem.configuredTimeOffsetFromLive =
 			CMTime(seconds: targetOffset, preferredTimescale: 600)
+		playerItem.automaticallyPreservesTimeOffsetFromLive = true
 
 		// Both the framework's own recovery above and the governor's catch-up
 		// below get the time back by playing slightly fast, and the default
@@ -800,6 +805,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		{
 			currentConfiguredOffset = max(6.0, currentConfiguredOffset - 0.5)
 			it.configuredTimeOffsetFromLive = CMTime(seconds: currentConfiguredOffset, preferredTimescale: 600)
+		} else if currentConfiguredOffset > targetOffset + 0.1 {
+			// Walk back toward targetOffset when the offset has drifted
+			// above it. This happens after recovering from a buffer hold:
+			// the effective offset grew while the player was paused, and
+			// the resume case set currentConfiguredOffset to that larger
+			// value to avoid a seek. Without this branch the offset stays
+			// at the larger value forever — the "below target" branch
+			// below only fires when currentConfiguredOffset < 17.9, and
+			// the true-latency branch above only fires when the wall
+			// clock is far past the already-large offset.
+			//
+			// Walk it back at 0.5 s per tick, same as the other legs, so
+			// the framework adjusts the playhead without seeking. Only
+			// 2.0 s of buffer is needed here — the step is so small that
+			// AVFoundation barely adjusts the rate, and the hold mechanism
+			// catches any resulting starve.
+			if let ahead = ahead, ahead >= 2.0 {
+				currentConfiguredOffset = max(targetOffset, currentConfiguredOffset - 0.5)
+				it.configuredTimeOffsetFromLive = CMTime(seconds: currentConfiguredOffset, preferredTimescale: 600)
+			}
 		} else if currentConfiguredOffset < targetOffset - 0.1 {
 			// Walk back toward targetOffset. Only when there is no reason
 			// to stay close to the edge — either the true latency is fine
