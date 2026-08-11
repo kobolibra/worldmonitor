@@ -27,8 +27,14 @@
   window.__bbgShell=shell;
   if(shell) document.documentElement.classList.add('shell-'+shell);
   if(shell==="mac"){
-    var pipBtn=document.getElementById("pipBtn");
-    if(pipBtn)pipBtn.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();post({a:"pip"});});
+    document.addEventListener("keydown",function(e){
+      if(e.metaKey||e.ctrlKey||e.altKey||e.repeat)return;
+      if((e.key||"").toLowerCase()==="p"){
+        var tag=(document.activeElement&&document.activeElement.tagName)||"";
+        if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT")return;
+        e.preventDefault();post({a:"pip"});
+      }
+    });
   }
   if(!post)return;
 
