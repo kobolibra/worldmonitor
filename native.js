@@ -25,6 +25,11 @@
   }catch(e){}
   if(!post){try{if(window.BbgPlayer&&typeof window.BbgPlayer.post==="function"){post=function(o){try{window.BbgPlayer.post(JSON.stringify(o));}catch(e){}};shell="android";}}catch(e){}}
   window.__bbgShell=shell;
+  if(shell) document.documentElement.classList.add('shell-'+shell);
+  if(shell==="mac"){
+    var pipBtn=document.getElementById("pipBtn");
+    if(pipBtn)pipBtn.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();post({a:"pip"});});
+  }
   if(!post)return;
 
   var api=null,live=false,dead=false,tracks=[],lockedH=null,muted=false,paused=false;
@@ -144,13 +149,8 @@
     var tag=document.createElement("span");tag.className="nlive";tag.innerHTML="<i></i>LIVE";
     btnMute=button(SOUND,"\u9759\u97f3 / \u53d6\u6d88\u9759\u97f3",function(){post({a:"mute",on:!muted});});
     /* Fullscreen is on the rail and via the F key; the nbar does not need a
-       second copy. On macOS the slot goes to Picture in Picture instead. */
-    if(shell==="mac"){
-      var pip=button(PIP,"\u753b\u4e2d\u753b",function(){post({a:"pip"});});
-      bar.appendChild(btnPlay);bar.appendChild(track);bar.appendChild(tag);bar.appendChild(btnMute);bar.appendChild(pip);
-    } else {
-      bar.appendChild(btnPlay);bar.appendChild(track);bar.appendChild(tag);bar.appendChild(btnMute);
-    }api.screen.appendChild(bar);placeBar();sync();
+       second copy. */
+    bar.appendChild(btnPlay);bar.appendChild(track);bar.appendChild(tag);bar.appendChild(btnMute);api.screen.appendChild(bar);placeBar();sync();
     /* Show the nbar when the pointer enters or moves, and hide it after a
        timeout. In cinema mode the idle timer in app.js takes over; these
        listeners become no-ops because showNbar checks for cinema. */

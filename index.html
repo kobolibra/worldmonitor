@@ -325,6 +325,11 @@
   .q-mode{color:var(--muted); transition:color .18s;}
   .q-btn:hover:not(:disabled) .q-mode,.q-btn[aria-expanded="true"] .q-mode{color:var(--accent-2);}
   .q-btn.fallen .q-mode{color:var(--accent-2);}
+  /* Shell-specific visibility: macOS gets PiP, hides the fullscreen button.
+     Non-macOS shells (Android, web) see the fullscreen button and no PiP. */
+  .mac-only{display:none!important;}
+  .shell-mac .mac-only{display:inline-flex!important;}
+  .shell-mac .mac-hide{display:none!important;}
   .q-thin{width:1px; height:9px; background:currentColor; opacity:.32;}
   .q-chev{width:9px; height:9px; opacity:.5; transition:transform .2s cubic-bezier(.2,.8,.2,1), opacity .18s;}
   .q-btn:disabled .q-chev{opacity:0;}
@@ -491,6 +496,12 @@
       </div>
     </div>
 
+    <span class="sep-dot mac-only" aria-hidden="true"></span>
+    <button class="q-btn mac-only" id="pipBtn" type="button" title="画中画（P）">
+      <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="14" rx="2"/><rect x="11" y="8" width="9" height="7" rx="1" fill="currentColor" stroke="none"/></svg>
+      <span class="q-mode">画中画</span>
+    </button>
+
     <span class="sep-dot" aria-hidden="true"></span>
 
     <div class="qsel">
@@ -509,7 +520,7 @@
 
     <span class="sep-dot" aria-hidden="true"></span>
 
-    <button class="q-btn" id="fsBtn" type="button" title="全屏（F）">
+    <button class="q-btn mac-hide" id="fsBtn" type="button" title="全屏（F）">
       <svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M15 4h5v5"/><path d="M20 15v5h-5"/><path d="M9 20H4v-5"/></svg>
       <span class="q-mode" id="fsTxt">全屏</span>
     </button>
@@ -536,7 +547,7 @@
      cached one of these files is entitled to keep serving it, so replacing the
      file alone does not reach a client that has been running for weeks - bump
      the number whenever the file behind it changes. -->
-<script src="native.js?v=4" defer></script>
+<script src="native.js?v=5" defer></script>
 <script src="app.js?v=31" defer></script>
 </body>
 </html>
