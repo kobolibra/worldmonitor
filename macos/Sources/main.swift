@@ -82,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	private var startedAt = Date()
 	private var failures = 0
 	private var sentTracks = false
+	/// When the app last resigned active, so a real resume can be told apart
+	/// from a glance away. Nil while in the foreground.
+	private var resignedAt: Date?
 
 	// MARK: The ladder
 	//
@@ -125,12 +128,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	// So the only thing set is where to stand relative to the live edge, which
 	// is a genuine editorial choice and not a performance hint.
 	//
-	// What the framework does not offer at all is the pair of things the Android
-	// build has always had: a cushion that applies only after a starve, and a
-	// ceiling on the rate used to recover the offset. Neither is a hint about
-	// which rung to prefer, which is exactly why neither could be expressed as
-	// one of the knobs above. They live in Playback.swift and are applied on the
-	// same one second tick the rail already runs on.
+	// What the framework does not offer at all is the trio of things the
+	// Android build has always had: a cushion that applies only after a
+	// starve, a ceiling on the rate used to recover the offset, and a
+	// standing invariant that keeps the playhead off the live edge for the
+	// life of the item rather than as a one-time placement. None of the
+	// three is a hint about which rung to prefer, which is exactly why none
+	// of them could be expressed as one of the knobs above. They live in
+	// Playback.swift and are applied on the same one second tick the rail
+	// already runs on.
 
 	/// Decides, per tick, whether to hold through a starve, whether to run
 	/// slightly fast to recover the live offset, and whether a pinned rung has
@@ -169,14 +175,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	/// or skipping — both of which spend the buffer that was already thinning.
 	func applicationDidResignActive(_ notification: Notification) {
 		guard let p = player, !userPaused else { return }
+		resignedAt = Date()
 		p.pause()
 	}
 
-	/// Resume when the user returns. A simple play() is enough: the offset was
-	/// never lost, so the playhead is still roughly where it was left, and the
-	/// buffer re-forms around it.
+	/// Resume when the user returns.
+	///
+	/// A plain play() is only correct for a brief glance away: the playhead is
+	/// still roughly where it was left, and the buffer re-forms around it.
+	/// Past a couple of seconds it is wrong in a way that reads as a bug - the
+	/// broadcast kept moving while this app did not, so resuming in place
+	/// starts by replaying exactly what was on screen when the viewer left,
+	/// and only then catches back up. That is what an earlier build of this
+	/// lifecycle handling looked like from the outside: a stutter, and the
+	/// last few seconds repeating. Android and the web never pause on
+	/// backgrounding at all, so they have nothing to catch up from; this path
+	/// does pause - a backgrounded AVPlayer still ties up a hardware decoder -
+	/// so instead it seeks to the live edge before resuming, the same jump the
+	/// page's own LIVE button makes, whenever the time away was long enough to
+	/// notice.
+	///
+	/// Station keeping is told to stand down for a few seconds too. Without
+	/// that it can fire on the very tick this seek is settling and drag the
+	/// playhead straight back behind the edge it was just placed at - two
+	/// repositions fighting each other is a second way to produce the same
+	/// stutter.
 	func applicationDidBecomeActive(_ notification: Notification) {
+		defer { resignedAt = nil }
 		guard let p = player, !userPaused else { return }
+
+		let awayFor = resignedAt.map { Date().timeIntervalSince($0) } ?? 0
+		governor.suppressStationKeeping(
+			for: 6.0, now: Date().timeIntervalSinceReferenceDate)
+
+		if awayFor > 2.0,
+			let it = item,
+			let end = it.seekableTimeRanges.last?.timeRangeValue.end
+		{
+			p.seek(to: end, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
+		}
 		p.play()
 	}
 
@@ -856,6 +893,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		case .dropPin:
 			degradeFromPin()
 			return true
+
+		case .reassertOffset:
+			// The playhead settled on the live edge - nothing published past it
+			// to prefetch, which is what collapsed the bitrate ladder the last
+			// time this was measured. automaticallyPreservesTimeOffsetFromLive
+			// only walks the playhead when the offset changes, so a stationary
+			// target has to be re-declared to have any effect, and the seek is
+			// done directly here rather than waiting on the framework's own
+			// recovery, which is exactly the slow, visible skip this exists to
+			// avoid.
+			it.configuredTimeOffsetFromLive =
+				CMTime(seconds: targetOffset, preferredTimescale: 600)
+			if let end = it.seekableTimeRanges.last?.timeRangeValue.end {
+				let wanted = CMTimeSubtract(
+					end, CMTime(seconds: targetOffset, preferredTimescale: 600))
+				let earliest = it.seekableTimeRanges.first?.timeRangeValue.start ?? wanted
+				let target = CMTimeMaximum(wanted, earliest)
+				p.seek(
+					to: target, toleranceBefore: .zero,
+					toleranceAfter: CMTime(seconds: 1, preferredTimescale: 600))
+			}
+			return false
 		}
 	}
 
