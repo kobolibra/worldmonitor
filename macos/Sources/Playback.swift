@@ -50,25 +50,28 @@ struct PlaybackSample {
 
 /// The tuning. Every value here has a counterpart in the Android build.
 struct PlaybackTuning {
-	/// Where the stream is meant to sit relative to the live edge.
+	/// Where the stream is meant to sit relative to the live edge. Matches
+	/// TARGET_OFFSET_MS on Android and liveSyncDuration in the web player.
 	///
-	/// Deliberately lower than TARGET_OFFSET_MS on Android and
-	/// liveSyncDuration in the web player, which are both 18. The three
-	/// numbers are not the same measurement: those two are compared against
-	/// an estimate of the playlist edge, whereas everything on this path -
-	/// the catch-up below, and the figure the rail shows - is compared
-	/// against currentDate(), the stream's own account of when the frame
-	/// happened. That includes the segment, packaging and CDN delay, which
-	/// the edge distance cannot see, so an identical constant buys a
-	/// materially later picture here than it does there.
+	/// This is a floor as much as a preference, and the floor is not ours.
+	/// For ordinary HLS, AVFoundation will not hold an offset below roughly
+	/// three times EXT-X-TARGETDURATION - the same rule that gives the ~30s
+	/// default when configuredTimeOffsetFromLive is set too late to be read.
+	/// Requesting less than that does not move the playhead closer to live;
+	/// it only shortens the distance between the playhead and the edge,
+	/// which is the entire window the loader has to prefetch into and the
+	/// only span the throughput estimate is taken over.
 	///
-	/// 12 is the configuration this app was measured smooth on and leaves
-	/// four segments of runway on a 3s feed - twice the rebuffer cushion
-	/// below, and nowhere near the live edge that build 11 rode until the
-	/// throughput estimate and the ladder collapsed together. Everything
-	/// else here is expressed relative to this value, so lowering it moves
-	/// the catch-up trigger and release with it and needs no other change.
-	var targetOffset = 12.0
+	/// Measured, on the same feed, one run each:
+	///
+	///   18   7.8 Mbps   12.3s buffered   17.2s latency
+	///   12   4.2 Mbps    1.0s buffered   16.4s latency, slower to start
+	///
+	/// Six seconds off the request bought eight tenths of a second of
+	/// latency and cost the ladder half its bitrate. Do not lower this
+	/// again without first establishing that the feed's target duration has
+	/// changed; the number that matters is three times that, not this one.
+	var targetOffset = 18.0
 	/// Seconds that must be buffered before playback resumes after a starve.
 	/// Mirrors bufferForPlaybackAfterRebufferMs.
 	var rebufferCushion = 5.0
