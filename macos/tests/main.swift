@@ -65,11 +65,15 @@ do {
 
 // ---- catch-up ----
 
+// Recovery is asserted at 13s rather than at a value that merely clears the
+// current target: 13 is inside targetOffset + catchUpRelease for both an 18s
+// and a 12s target, so these checks test the release rule and not the target
+// constant that happens to sit beside it.
 do {
 	let g=PlaybackGovernor()
 	check("30s behind starts the catch-up",g.decide(sample(behind:30),now:500),.catchUp(rate:1.1))
 	check("the rate is not re-asserted",g.decide(sample(behind:25),now:501),.none)
-	check("back on target ends it",g.decide(sample(behind:19),now:505),.endCatchUp)
+	check("back on target ends it",g.decide(sample(behind:13),now:505),.endCatchUp)
 	check("a cooldown follows",g.decide(sample(behind:30),now:506),.none)
 	check("then it may help again",g.decide(sample(behind:30),now:570),.catchUp(rate:1.1))
 }
@@ -109,7 +113,7 @@ do {
 
 // ---- reset ----
 
-do { let g=PlaybackGovernor(); _=g.decide(sample(behind:30),now:1400); _=g.decide(sample(behind:19),now:1401); g.reset(); check("reset clears the cooldown",g.decide(sample(behind:30),now:1402),.catchUp(rate:1.1)) }
+do { let g=PlaybackGovernor(); _=g.decide(sample(behind:30),now:1400); _=g.decide(sample(behind:13),now:1401); g.reset(); check("reset clears the cooldown",g.decide(sample(behind:30),now:1402),.catchUp(rate:1.1)) }
 
 // ---- shallow target ----
 
@@ -152,8 +156,8 @@ do {
 
 do {
 	let g=PlaybackGovernor()
-	// Edge distance is on target (18s) but true latency is 30s — the
-	// CDN is 12s behind the broadcast. The true latency, not the edge
+	// Edge distance is on target but true latency is 30s — the CDN is
+	// well behind the broadcast. The true latency, not the edge
 	// distance, should trigger the catch-up.
 	check("true latency triggers catch-up",g.decide(sample(behind:18,trueLatency:30),now:1900),.catchUp(rate:1.1))
 }
@@ -161,7 +165,7 @@ do {
 do {
 	let g=PlaybackGovernor()
 	_=g.decide(sample(behind:18,trueLatency:30),now:2000)
-	check("true latency recovery ends catch-up",g.decide(sample(behind:18,trueLatency:19),now:2005),.endCatchUp)
+	check("true latency recovery ends catch-up",g.decide(sample(behind:18,trueLatency:13),now:2005),.endCatchUp)
 }
 
 // Edge distance still works when there is no true-latency signal.
