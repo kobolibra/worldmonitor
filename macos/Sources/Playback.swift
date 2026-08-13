@@ -50,9 +50,25 @@ struct PlaybackSample {
 
 /// The tuning. Every value here has a counterpart in the Android build.
 struct PlaybackTuning {
-	/// Where the stream is meant to sit relative to the live edge. Matches
-	/// TARGET_OFFSET_MS on Android and liveSyncDuration in the web player.
-	var targetOffset = 18.0
+	/// Where the stream is meant to sit relative to the live edge.
+	///
+	/// Deliberately lower than TARGET_OFFSET_MS on Android and
+	/// liveSyncDuration in the web player, which are both 18. The three
+	/// numbers are not the same measurement: those two are compared against
+	/// an estimate of the playlist edge, whereas everything on this path -
+	/// the catch-up below, and the figure the rail shows - is compared
+	/// against currentDate(), the stream's own account of when the frame
+	/// happened. That includes the segment, packaging and CDN delay, which
+	/// the edge distance cannot see, so an identical constant buys a
+	/// materially later picture here than it does there.
+	///
+	/// 12 is the configuration this app was measured smooth on and leaves
+	/// four segments of runway on a 3s feed - twice the rebuffer cushion
+	/// below, and nowhere near the live edge that build 11 rode until the
+	/// throughput estimate and the ladder collapsed together. Everything
+	/// else here is expressed relative to this value, so lowering it moves
+	/// the catch-up trigger and release with it and needs no other change.
+	var targetOffset = 12.0
 	/// Seconds that must be buffered before playback resumes after a starve.
 	/// Mirrors bufferForPlaybackAfterRebufferMs.
 	var rebufferCushion = 5.0
