@@ -54,9 +54,19 @@ struct PlaybackSample {
 
 /// The tuning. Every value here has a counterpart in the Android build.
 struct PlaybackTuning {
-	/// Where the stream is meant to sit relative to the live edge. Matches
-	/// TARGET_OFFSET_MS on Android and liveSyncDuration in the web player.
-	var targetOffset = 18.0
+	/// Where the stream is meant to sit relative to the live edge.
+	///
+	/// Deliberately tighter than TARGET_OFFSET_MS on Android and
+	/// liveSyncDuration in the web player, both of which are still 18s. With
+	/// station keeping holding the ladder at the top rung there is headroom
+	/// here that those two were not measured with, and latency is the thing
+	/// that headroom is worth spending on.
+	///
+	/// The floor on this value is not comfort, it is `stationFloor` below:
+	/// a target inside that band is a target on the live edge, with nothing
+	/// published ahead of the playhead to prefetch, and the throughput
+	/// estimate collapses. 12 keeps a wide margin over it.
+	var targetOffset = 12.0
 	/// Seconds that must be buffered before playback resumes after a starve.
 	/// Mirrors bufferForPlaybackAfterRebufferMs.
 	var rebufferCushion = 5.0
