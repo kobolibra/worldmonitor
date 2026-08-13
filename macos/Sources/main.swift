@@ -92,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	// a picked quality mean anything here - see applyRequestedLevel.
 	private var masterURL: URL?
 	private var variantURLs: [Int: URL] = [:]
+	/// The BANDWIDTH each rung declares, kept for the same reason its URL is:
+	/// once a rung's own playlist is open, the master's declaration is the only
+	/// surviving account of what that picture costs. See videoBitrate.
+	private var variantBitrates: [Int: Int] = [:]
 	/// What the page asked for: a height, or 0 for automatic.
 	private var requestedHeight = 0
 	/// Which rung's own playlist is currently open, or 0 for the master.
@@ -323,6 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		}
 		masterURL = u
 		variantURLs = [:]
+		variantBitrates = [:]
 		pinnedHeight = 0
 		sentTracks = false
 		failures = 0
@@ -357,8 +362,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		//
 		// The offset MUST be set before enabling preservation. Reversing the
 		// order causes AVFoundation to lock in a default offset (3× target
-		// duration, ~30 s for a 10 s segment) and ignore the configured value,
-		// which is why the macOS app was 10+ seconds behind Android.
+		// duration) and ignore the configured value, which is why the macOS app
+		// was once 10+ seconds behind Android.
 		playerItem.configuredTimeOffsetFromLive =
 			CMTime(seconds: targetOffset, preferredTimescale: 600)
 		playerItem.automaticallyPreservesTimeOffsetFromLive = true
@@ -557,6 +562,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		guard pinnedHeight != 0, let master = masterURL else { return }
 		pinnedHeight = 0
 		variantURLs = [:]
+		variantBitrates = [:]
 		open(master, startMuted: muted)
 	}
 
@@ -595,13 +601,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			// handed back to hls.js.
 			let base = response?.url ?? url
 
+			// One entry per height, because the page's menu is a list of heights
+			// - and where a feed offers the same height at more than one
+			// bitrate, the richest of them. This feed publishes 720p twice, at
+			// 1.5 and 2.4 Mbps, and lists the poorer one first: keeping the
+			// first occurrence meant that choosing 720p pinned the viewer to the
+			// worse of the two, with no way to reach the better one at all.
+			var best: [Int: (h: Int, w: Int, bps: Int, uri: String)] = [:]
+			for v in parsed {
+				if v.h <= 0 { continue }
+				if let existing = best[v.h], existing.bps >= v.bps { continue }
+				best[v.h] = v
+			}
+
 			var list: [[String: Any]] = []
 			var map: [Int: URL] = [:]
-			var seen = Set<Int>()
-			for v in parsed {
-				if v.h <= 0 || seen.contains(v.h) { continue }
-				seen.insert(v.h)
+			var rates: [Int: Int] = [:]
+			for h in best.keys.sorted(by: >) {
+				guard let v = best[h] else { continue }
 				list.append(["h": v.h, "w": v.w, "bps": v.bps])
+				if v.bps > 0 { rates[v.h] = v.bps }
 				if let resolved = URL(string: v.uri, relativeTo: base)?.absoluteURL {
 					map[v.h] = resolved
 				}
@@ -612,6 +631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 				guard let self = self, self.player != nil, !self.sentTracks else { return }
 				self.sentTracks = true
 				self.variantURLs = map
+				self.variantBitrates = rates
 				self.send(["t": "tracks", "list": list])
 				// A pick restored from storage arrives before the ladder does, and
 				// until now could only be applied as a ceiling. It can be done
@@ -743,11 +763,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 	/// measurement. The edge distance is reported alongside either way, because
 	/// it is what the governor steers on and the two disagreeing is diagnostic
 	/// rather than confusing.
+	///
+	/// One consequence is worth stating plainly, because an afternoon was lost
+	/// to it: this figure is not comparable with the one the web player shows.
+	/// hls.latency is measured to the end of the playlist, so it cannot see the
+	/// publish delay at all and reads several seconds lower on the same picture
+	/// at the same moment. Neither is wrong. They are answers to different
+	/// questions, and only this one is the answer to the viewer's.
 	private func trueLatency(_ it: AVPlayerItem) -> Double? {
 		guard let stamp = it.currentDate() else { return nil }
 		let seconds = Date().timeIntervalSince(stamp)
 		guard seconds.isFinite, seconds > 0, seconds < latencyCeiling else { return nil }
 		return seconds
+	}
+
+	/// The encoded bitrate of the picture on screen - and only ever that.
+	///
+	/// indicatedBitrate is the BANDWIDTH the master playlist declares for the
+	/// rung in use, which is the honest answer whenever the master is open.
+	/// When a rung is pinned the player has that rung's own media playlist
+	/// open, and a media playlist carries no EXT-X-STREAM-INF at all, so the
+	/// framework has nothing to report and returns zero.
+	///
+	/// What this used to do at that point was fall back to observedBitrate, and
+	/// observedBitrate is not a property of the picture. It is how fast the
+	/// segments arrived: network throughput. On this feed the richest rung
+	/// declares 3.0 Mbps, so a rail reading 7.8 Mbps was reporting the line
+	/// speed and saying nothing whatever about the quality - while the web
+	/// decoder beside it, computing bytes over media duration, reported a real
+	/// 2.8 Mbps for the same 1080p picture. Two quantities under one label, and
+	/// every comparison drawn between the two platforms from them was worthless.
+	///
+	/// So: the framework's figure when it has one, the ladder's own declaration
+	/// for the pinned rung when it does not, and nothing at all rather than a
+	/// throughput wearing a bitrate's label. Throughput still travels to the
+	/// page, under its own name, where it can be labelled for what it is.
+	private func videoBitrate(_ it: AVPlayerItem) -> Int? {
+		if let event = it.accessLog()?.events.last, event.indicatedBitrate > 0 {
+			return Int(event.indicatedBitrate)
+		}
+		if pinnedHeight != 0, let declared = variantBitrates[pinnedHeight], declared > 0 {
+			return declared
+		}
+		return nil
+	}
+
+	/// How fast the segments are arriving. A diagnostic, never the bitrate.
+	private func throughput(_ it: AVPlayerItem) -> Int? {
+		guard let event = it.accessLog()?.events.last, event.observedBitrate > 0 else {
+			return nil
+		}
+		return Int(event.observedBitrate)
 	}
 
 	private func tick() {
@@ -798,6 +864,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		// toward targetOffset when the latency is back to normal. Every
 		// step is at most 0.5 s so the framework adjusts the playhead
 		// gradually without seeking.
+		//
+		// It is worth knowing what this cannot do. A request larger than
+		// the playlist's sliding window resolves to the oldest segment
+		// available, so on a feed with a short window several different
+		// requests all land on the same frame and walking between them
+		// changes nothing a viewer can see. See the note on targetOffset.
 		if let wall = wall, let ahead = ahead,
 		   wall > currentConfiguredOffset + governor.tuning.catchUpTrigger,
 		   ahead >= governor.tuning.catchUpMinimumBuffer,
@@ -812,9 +884,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			// the resume case set currentConfiguredOffset to that larger
 			// value to avoid a seek. Without this branch the offset stays
 			// at the larger value forever — the "below target" branch
-			// below only fires when currentConfiguredOffset < 17.9, and
-			// the true-latency branch above only fires when the wall
-			// clock is far past the already-large offset.
+			// below only fires when currentConfiguredOffset is under the
+			// target, and the true-latency branch above only fires when
+			// the wall clock is far past the already-large offset.
 			//
 			// Walk it back at 0.5 s per tick, same as the other legs, so
 			// the framework adjusts the playhead without seeking. Only
@@ -853,10 +925,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			payload["true"] = false
 		}
 		if let behind = behind { payload["edge"] = behind }
-		if let event = it.accessLog()?.events.last {
-			let bps = event.indicatedBitrate > 0 ? event.indicatedBitrate : event.observedBitrate
-			if bps > 0 { payload["bps"] = Int(bps) }
-		}
+		// A bitrate, or nothing at all. Never a throughput in its place - see
+		// videoBitrate. The throughput travels under its own key so that the two
+		// can never again be read as the same measurement.
+		if let bps = videoBitrate(it) { payload["bps"] = bps }
+		if let net = throughput(it) { payload["net"] = net }
 		if size.width > 0 {
 			payload["w"] = Int(size.width)
 			payload["h"] = Int(size.height)
