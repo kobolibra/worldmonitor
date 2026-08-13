@@ -53,24 +53,53 @@ struct PlaybackTuning {
 	/// Where the stream is meant to sit relative to the live edge. Matches
 	/// TARGET_OFFSET_MS on Android and liveSyncDuration in the web player.
 	///
-	/// This is a floor as much as a preference, and the floor is not ours.
-	/// For ordinary HLS, AVFoundation will not hold an offset below roughly
-	/// three times EXT-X-TARGETDURATION - the same rule that gives the ~30s
-	/// default when configuredTimeOffsetFromLive is set too late to be read.
-	/// Requesting less than that does not move the playhead closer to live;
-	/// it only shortens the distance between the playhead and the edge,
-	/// which is the entire window the loader has to prefetch into and the
-	/// only span the throughput estimate is taken over.
+	/// Two separate floors sit under this number, and neither is ours.
+	///
+	/// The first is the framework's: for ordinary HLS, AVFoundation will not
+	/// hold an offset below roughly three times EXT-X-TARGETDURATION - the
+	/// same rule that produces the ~30s default when
+	/// configuredTimeOffsetFromLive is set too late to be read. This feed's
+	/// segments are 2.1s, measured from the web decoder's own FRAG_BUFFERED
+	/// telemetry, so that floor is near 6s here. An earlier version of this
+	/// note claimed the rule put the floor at 18s. The rule is real; the
+	/// number attached to it was invented.
+	///
+	/// The second is the one that actually binds, and it is the length of the
+	/// sliding window. A playlist of roughly six 2.1s segments is about 12s of
+	/// history in total, and a player cannot stand further back than the
+	/// oldest segment it has been given. The web player is the clearest
+	/// evidence: it asks for 18s, reaches 11.8s, and does it at rate 1.00. It
+	/// is not catching up. It has run out of playlist.
+	///
+	/// So on this feed every request of about 12s or more lands on the same
+	/// frame - the oldest one available - and differs in nothing else. Below
+	/// that, the request does move the playhead, but the distance between the
+	/// playhead and the edge is also the entire window the loader has to
+	/// prefetch into, and the only span the throughput estimate is taken over.
 	///
 	/// Measured, on the same feed, one run each:
 	///
-	///   18   7.8 Mbps   12.3s buffered   17.2s latency
-	///   12   4.2 Mbps    1.0s buffered   16.4s latency, slower to start
+	///   18   12.3s buffered   17.2s latency
+	///   12    1.0s buffered   16.4s latency, slower to start
 	///
-	/// Six seconds off the request bought eight tenths of a second of
-	/// latency and cost the ladder half its bitrate. Do not lower this
-	/// again without first establishing that the feed's target duration has
-	/// changed; the number that matters is three times that, not this one.
+	/// Six seconds off the request bought eight tenths of a second, because
+	/// both requests resolved to the same position, and cost nearly all of the
+	/// prefetch runway. The remaining ~4s between the window length and the
+	/// measured latency is publish delay - encode, package, upload, playlist
+	/// refresh - which is upstream of every client and reachable by none of
+	/// them.
+	///
+	/// Do not lower this again on the strength of a latency reading alone.
+	/// Establish the feed's segment duration and window length first: the
+	/// numbers that govern are three times the former and the whole of the
+	/// latter, not this one.
+	///
+	/// The bitrate column that used to accompany the table above has been
+	/// removed rather than corrected. It was read from the rail, and the rail
+	/// reported observedBitrate - network throughput - whenever a rung was
+	/// pinned. This feed's richest rung declares 3.0 Mbps, so the 7.8 Mbps it
+	/// showed was never a bitrate and the ladder it appeared to describe never
+	/// halved. See videoBitrate in main.swift.
 	var targetOffset = 18.0
 	/// Seconds that must be buffered before playback resumes after a starve.
 	/// Mirrors bufferForPlaybackAfterRebufferMs.
