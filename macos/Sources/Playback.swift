@@ -18,6 +18,15 @@ enum PlaybackAction: Equatable {
 	/// The pinned rung cannot be sustained. Drop the pin and reopen the
 	/// master, keeping the requested height as a ceiling.
 	case dropPin
+	/// The playhead has settled onto the live edge and stayed there long
+	/// enough that it is not noise. Re-declare the configured offset and
+	/// seek back behind the edge. Android never loses this because
+	/// setTargetOffsetMs lives on the MediaItem for its whole life; here the
+	/// same property is a one-shot that a background pause or a shallow
+	/// startup window can silently undo, and a playhead on the edge has
+	/// nothing ahead of it to prefetch - the throughput estimate collapses
+	/// and the bitrate ladder follows it down.
+	case reassertOffset
 }
 
 /// Everything the governor needs to know about the player, sampled once per
@@ -73,6 +82,15 @@ struct PlaybackTuning {
 	var catchUpMaxDuration = 30.0
 	/// And a rest afterwards, for the same reason.
 	var catchUpCooldown = 60.0
+	/// Behind-live distances at or under this are the live edge in practice,
+	/// not real progress toward it.
+	var stationFloor = 4.0
+	/// How long the playhead has to sit on the edge before it counts as
+	/// settled rather than a one-tick measurement blip.
+	var stationEvidence = 8.0
+	/// Reasserting the offset costs a seek and a refill, so it has to stay
+	/// rare. Matches the spacing used while this was last measured working.
+	var stationCooldown = 90.0
 }
 
 /// Decides, once a second, whether to hold through a starve, whether to run
@@ -94,6 +112,8 @@ final class PlaybackGovernor {
 	private var holdingSince = 0.0
 	private var catchUpSince = 0.0
 	private var catchUpBlockedUntil = -Double.greatestFiniteMagnitude
+	private var stationOffSince: Double?
+	private var stationBlockedUntil = -Double.greatestFiniteMagnitude
 
 	init(tuning: PlaybackTuning = PlaybackTuning()) {
 		self.tuning = tuning
@@ -104,11 +124,26 @@ final class PlaybackGovernor {
 		holding = false
 		catchingUp = false
 		catchUpBlockedUntil = -Double.greatestFiniteMagnitude
+		stationOffSince = nil
+		stationBlockedUntil = -Double.greatestFiniteMagnitude
 	}
 
 	/// The viewer took control. Their intent outranks anything decided here.
 	func releaseHold() {
 		holding = false
+	}
+
+	/// Called when the app returns from the background. A pause there
+	/// freezes the playhead and the caller seeks it back near the live edge
+	/// on resume; station keeping must not fight that seek while the buffer
+	/// re-forms around it. Without this it can reassert on the very tick the
+	/// resume seek is settling and drag the playhead straight back behind the
+	/// edge it was just placed at - two repositions fighting each other is
+	/// exactly what one earlier round of this feature read as a stutter and a
+	/// repeat of the last few seconds.
+	func suppressStationKeeping(for seconds: Double, now: Double) {
+		stationBlockedUntil = max(stationBlockedUntil, now + seconds)
+		stationOffSince = nil
 	}
 
 	/// One tick. `now` is a monotonic-enough seconds value supplied by the
@@ -173,7 +208,7 @@ final class PlaybackGovernor {
 			return .none
 		}
 
-		if now < catchUpBlockedUntil { return .none }
+		if now < catchUpBlockedUntil { return steerStation(behind: behind, now: now) }
 		if behind > tuning.targetOffset + tuning.catchUpTrigger,
 			ahead >= tuning.catchUpMinimumBuffer
 		{
@@ -181,7 +216,29 @@ final class PlaybackGovernor {
 			catchUpSince = now
 			return .catchUp(rate: tuning.catchUpRate)
 		}
-		return .none
+		return steerStation(behind: behind, now: now)
+	}
+
+	/// The complement of catch-up: not "too far behind" but "not behind
+	/// enough". A playhead sitting on the live edge has nothing published
+	/// past it to prefetch, so the throughput estimate collapses and the
+	/// ladder follows it to the bottom rung - measured, previously, as
+	/// exactly this: a healthy-looking buffer, a near-zero distance to live,
+	/// and 400-600 kbps. Distinct from catch-up because the fix is not a
+	/// faster rate, which cannot outrun a feed that has already caught the
+	/// playhead - it is a seek back behind the edge.
+	private func steerStation(behind: Double, now: Double) -> PlaybackAction {
+		guard now >= stationBlockedUntil else { return .none }
+		guard behind <= tuning.stationFloor else {
+			stationOffSince = nil
+			return .none
+		}
+		let since = stationOffSince ?? now
+		stationOffSince = since
+		guard now - since >= tuning.stationEvidence else { return .none }
+		stationOffSince = nil
+		stationBlockedUntil = now + tuning.stationCooldown
+		return .reassertOffset
 	}
 
 	private func endCatchUpIfNeeded(now: Double, force: Bool) -> PlaybackAction {
