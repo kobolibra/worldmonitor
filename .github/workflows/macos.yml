@@ -87,6 +87,10 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
+          # This workflow runs from apps. Without an explicit target, GitHub
+          # creates a new release tag at the repository's default branch (main),
+          # which can describe different source from the binary just built.
+          target_commitish: ${{ github.sha }}
           tag_name: mac-${{ github.run_number }}
           name: Bloomberg Live for macOS (build ${{ github.run_number }})
           body: |
