@@ -477,14 +477,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		p.pause()
 	}
 
-	// Native menu actions deliberately share the same playback paths as the
-	// on-screen controls. A menu item should not be a second implementation of
-	// play, mute or live recovery with subtly different buffering behaviour.
-	@objc private func togglePlaybackFromMenu() { toggleByViewer() }
-	@objc private func toggleMuteFromMenu() { setMuted(!muted) }
-	@objc private func jumpToLiveFromMenu() { jumpToLive() }
-	@objc private func togglePiPFromMenu() { togglePiP() }
-
 	/// The page's LIVE button: go to the edge now.
 	///
 	/// automaticallyPreservesTimeOffsetFromLive will walk the playhead back to
@@ -1256,32 +1248,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			keyEquivalent: "q")
 		appItem.submenu = appMenu
 
-		let playbackItem = NSMenuItem()
-		main.addItem(playbackItem)
-		let playbackMenu = NSMenu(title: "Playback")
-		let playPause = NSMenuItem(title: "Play / Pause", action: #selector(togglePlaybackFromMenu), keyEquivalent: "")
-		playPause.target = self
-		playbackMenu.addItem(playPause)
-		let mute = NSMenuItem(title: "Mute / Unmute", action: #selector(toggleMuteFromMenu), keyEquivalent: "")
-		mute.target = self
-		playbackMenu.addItem(mute)
-		let goLive = NSMenuItem(title: "Go Live", action: #selector(jumpToLiveFromMenu), keyEquivalent: "")
-		goLive.target = self
-		playbackMenu.addItem(goLive)
-		playbackMenu.addItem(.separator())
-		let pip = NSMenuItem(title: "Picture in Picture", action: #selector(togglePiPFromMenu), keyEquivalent: "")
-		pip.target = self
-		playbackMenu.addItem(pip)
-		playbackMenu.addItem(.separator())
-		let engine = NSMenuItem(
-			title: "Use Web Decoder (hls.js)",
-			action: #selector(toggleEngine), keyEquivalent: "")
-		engine.target = self
-		playbackMenu.addItem(engine)
-		engineItem = engine
-		updateEngineItem()
-		playbackItem.submenu = playbackMenu
-
 		let viewItem = NSMenuItem()
 		main.addItem(viewItem)
 		let viewMenu = NSMenu(title: "View")
@@ -1296,6 +1262,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 		hardReload.keyEquivalentModifierMask = [.command, .shift]
 		hardReload.target = self
 		viewMenu.addItem(hardReload)
+		viewMenu.addItem(.separator())
+		let engine = NSMenuItem(
+			title: "Use Web Decoder (hls.js)",
+			action: #selector(toggleEngine),
+			keyEquivalent: "e")
+		engine.target = self
+		viewMenu.addItem(engine)
+		engineItem = engine
+		updateEngineItem()
 		viewMenu.addItem(.separator())
 		let full = NSMenuItem(
 			title: "Enter Full Screen",
@@ -1423,8 +1398,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 			contentRect: pipRect, styleMask: style, backing: .buffered,
 			defer: false)
 		w.title = "Bloomberg Live"
-		w.titleVisibility = .hidden
-		w.titlebarAppearsTransparent = true
 		w.isFloatingPanel = true
 		w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 		w.level = .floating
@@ -1435,7 +1408,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
 		let pv = AVPlayerView(frame: pipRect)
 		pv.player = p
-		pv.videoGravity = .resizeAspect
 		pv.controlsStyle = .floating
 		pv.autoresizingMask = [.width, .height]
 
